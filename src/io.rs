@@ -8,16 +8,17 @@ use flate2::read::MultiGzDecoder;
 
 /// Open `path` as a buffered reader.
 ///
-/// - `None` or `Some("-")` reads from standard input.
+/// - `"-"` reads from standard input.
 /// - Any other value is treated as a file path.
 ///
 /// In both cases the first two bytes are peeked (without consuming them); if
 /// they are the gzip magic `1f 8b` the stream is wrapped in a
 /// [`MultiGzDecoder`], so gzip'd and plain inputs are handled identically.
-pub fn open_reader(path: Option<&str>) -> io::Result<Box<dyn BufRead>> {
-    let raw: Box<dyn Read> = match path {
-        None | Some("-") => Box::new(io::stdin()),
-        Some(p) => Box::new(File::open(p)?),
+pub fn open_reader(path: &str) -> io::Result<Box<dyn BufRead>> {
+    let raw: Box<dyn Read> = if path == "-" {
+        Box::new(io::stdin())
+    } else {
+        Box::new(File::open(path)?)
     };
 
     let mut reader = BufReader::new(raw);
