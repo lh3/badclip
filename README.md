@@ -30,7 +30,7 @@ Options:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--paf` | off | Read PAF (optionally gzip'd) instead of BAM. |
-| `-c`, `--min-clip <INT>` | `100` | Minimum clip length to report a clip breakend. |
+| `-c`, `--min-clip <INT>` | `50` | Minimum clip length to report a clip breakend. |
 | `-q`, `--min-mapq <INT>` | `0` | Drop hits with mapping quality below this value. |
 | `-a`, `--min-aln-len <INT>` | `0` | Drop hits whose alignment block length (PAF col 11) is below this value. |
 | `-f`, `--flank <INT>` | `250` | Flanking read sequence extracted on each side of a breakend (BAM only). |

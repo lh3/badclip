@@ -65,7 +65,7 @@ read and feed the shared `emit_read`.
 Within a read, hits are sorted by query start `qs`. Filtering is off by default:
 `-q` drops hits below a mapq (default 0) and `-a` drops hits whose alignment
 block length (PAF col 11, the `alen` field) is below a threshold (default 0).
-The clip threshold is `-c` (default 100).
+The clip threshold is `-c` (default 50).
 
 **eseq/elen (BAM only).** With the read sequence available, each breakend also
 gets a window around the junction: read-forward `[max(lo-f,0), min(hi+f,qlen)]`

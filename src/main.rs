@@ -32,7 +32,7 @@ enum Command {
         paf: bool,
 
         /// Minimum clip length to report a clip breakend.
-        #[arg(short = 'c', long = "min-clip", default_value_t = 100)]
+        #[arg(short = 'c', long = "min-clip", default_value_t = 50)]
         min_clip: i64,
 
         /// Drop hits with mapping quality below this value.
