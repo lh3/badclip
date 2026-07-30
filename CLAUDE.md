@@ -82,14 +82,16 @@ both emit 1009 lines; the diff after masking `aln_len` is empty.)
 ### Output (9 columns, TAB-delimited)
 
 ```
-ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  aln_len=..;qlen=..;mapq=..[;elen=..;eseq=..]
+ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  idx=..;aln_len=..;qlen=..;mapq=..[;elen=..;eseq=..]
 ```
 
 `ori` is two characters, each `>`/`<`, or `.` for a missing mate. The INFO
-column's first three tags are keyed to **output order** — index 1 tracks
-`ctg1:pos1`, index 2 tracks `ctg2:pos2` — so their values swap with the endpoints
-when a join is flipped (`elen`/`eseq`, appended for BAM, do not swap):
+column starts with `idx`, then three tags keyed to **output order** — index 1
+tracks `ctg1:pos1`, index 2 tracks `ctg2:pos2` — so their values swap with the
+endpoints when a join is flipped (`elen`/`eseq`, appended for BAM, do not swap):
 
+- `idx=N` — 0-based index of this clip/breakend within the read, emission order
+  (left clip, joins, right clip); resets per read (`emit_read`'s local counter).
 - `aln_len=len1,len2` — alignment block length (PAF col 11) of each hit; for a
   clip `len2 = 0`.
 - `qlen=left,middle,right` — query lengths summing to the read length.

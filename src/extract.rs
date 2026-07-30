@@ -171,12 +171,17 @@ pub(crate) fn emit_read(
     let first = &hits[0];
     let last = &hits[hits.len() - 1];
 
+    // `idx` numbers each emitted breakend within this read (0-based, in emission
+    // order: left clip, joins, right clip); it resets for the next read.
+    let mut idx = 0i64;
+
     // Left clip: the read start is clipped and connects to nothing. Its eseq
     // window is centered on the clip point (the read start of the first hit).
     if first.qs > opts.min_clip {
         let arrow = flip(first.ori());
         emit_clip(
             out,
+            idx,
             first,
             first.fts(),
             arrow,
@@ -185,11 +190,13 @@ pub(crate) fn emit_read(
             opts,
             read_seq,
         )?;
+        idx += 1;
     }
 
     // Joins between adjacent hits along the read.
     for pair in hits.windows(2) {
-        emit_join(out, &pair[0], &pair[1], opts, read_seq)?;
+        emit_join(out, idx, &pair[0], &pair[1], opts, read_seq)?;
+        idx += 1;
     }
 
     // Right clip: the read end is clipped and connects to nothing. Its eseq
@@ -198,6 +205,7 @@ pub(crate) fn emit_read(
         let arrow = last.ori();
         emit_clip(
             out,
+            idx,
             last,
             last.fte(),
             arrow,
@@ -221,6 +229,7 @@ pub(crate) fn emit_read(
 #[allow(clippy::too_many_arguments)]
 fn emit_clip(
     out: &mut impl Write,
+    idx: i64,
     h: &Hit,
     pos: i64,
     arrow: char,
@@ -232,13 +241,14 @@ fn emit_clip(
     let eseq = eseq_info(read_seq, opts, h.qlen, qpos, qpos, 0);
     writeln!(
         out,
-        "{}\t{}\t{}.\t.\t.\t{}\t{}\t{}\taln_len={},0;qlen={},0,{};mapq={},0{}",
+        "{}\t{}\t{}.\t.\t.\t{}\t{}\t{}\tidx={};aln_len={},0;qlen={},0,{};mapq={},0{}",
         h.ctg,
         pos,
         arrow,
         h.qname,
         h.mapq,
         h.strand.as_char(),
+        idx,
         h.alen,
         h.qlen - clipped,
         clipped,
@@ -248,8 +258,10 @@ fn emit_clip(
 }
 
 /// Emit a join breakend between upstream hit `y0` and downstream hit `y1`.
+#[allow(clippy::too_many_arguments)]
 fn emit_join(
     out: &mut impl Write,
+    idx: i64,
     y0: &Hit,
     y1: &Hit,
     opts: &ExtractOpts,
@@ -293,7 +305,7 @@ fn emit_join(
     let eseq = eseq_info(read_seq, opts, y0.qlen, lo, hi, mid);
     writeln!(
         out,
-        "{}\t{}\t{}{}\t{}\t{}\t{}\t{}\t{}\taln_len={},{};qlen={},{},{};mapq={},{}{}",
+        "{}\t{}\t{}{}\t{}\t{}\t{}\t{}\t{}\tidx={};aln_len={},{};qlen={},{},{};mapq={},{}{}",
         ctg0,
         pos0,
         o0,
@@ -303,6 +315,7 @@ fn emit_join(
         y0.qname,
         mapq,
         strand,
+        idx,
         len0,
         len1,
         left,
