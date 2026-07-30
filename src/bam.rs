@@ -68,14 +68,9 @@ pub fn run_bam(input: &str, opts: &ExtractOpts, out: &mut impl Write) -> io::Res
             let op = op?;
             ops.push((kind_char(op.kind()), op.len() as i64));
         }
-        let mut hits = vec![make_hit(
-            qname.clone(),
-            ctg.clone(),
-            pos0,
-            strand,
-            mapq,
-            &ops,
-        )];
+        let primary = make_hit(qname.clone(), ctg.clone(), pos0, strand, mapq, &ops);
+        let qlen = primary.qlen;
+        let mut hits = vec![primary];
 
         // Supplementary hits, from the SA:Z: tag.
         if let Some(sa) = sa_tag(&record)? {
@@ -86,10 +81,50 @@ pub fn run_bam(input: &str, opts: &ExtractOpts, out: &mut impl Write) -> io::Res
             }
         }
 
+        // Read sequence on the original read strand, for eseq extraction. The
+        // primary SEQ is in alignment orientation; reverse-complement it when the
+        // primary is reverse-mapped. Only usable when it spans the whole read
+        // (i.e. the primary is soft-, not hard-, clipped).
+        let seq: Vec<u8> = record.sequence().iter().collect();
+        let read_fwd: Option<Vec<u8>> = if seq.len() as i64 == qlen {
+            Some(match strand {
+                Strand::Rev => revcomp(&seq),
+                Strand::Fwd => seq,
+            })
+        } else {
+            None
+        };
+
         hits.retain(|h| passes_filter(h, opts));
-        emit_read(&mut hits, opts, out)?;
+        emit_read(&mut hits, opts, read_fwd.as_deref(), out)?;
     }
     Ok(())
+}
+
+/// Reverse-complement a read sequence (ASCII bases).
+fn revcomp(seq: &[u8]) -> Vec<u8> {
+    seq.iter().rev().map(|&b| complement(b)).collect()
+}
+
+/// Complement a single ASCII base (ACGT + N + IUPAC codes; unknown pass through).
+fn complement(b: u8) -> u8 {
+    match b {
+        b'A' => b'T',
+        b'C' => b'G',
+        b'G' => b'C',
+        b'T' => b'A',
+        b'R' => b'Y',
+        b'Y' => b'R',
+        b'S' => b'S',
+        b'W' => b'W',
+        b'K' => b'M',
+        b'M' => b'K',
+        b'B' => b'V',
+        b'V' => b'B',
+        b'D' => b'H',
+        b'H' => b'D',
+        other => other,
+    }
 }
 
 fn strand_of(reverse: bool) -> Strand {

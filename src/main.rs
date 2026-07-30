@@ -41,6 +41,14 @@ enum Command {
         /// Drop hits whose alignment block length (PAF col 11) is below this.
         #[arg(short = 'a', long = "min-aln-len", default_value_t = 0)]
         min_aln_len: i64,
+
+        /// Flanking read sequence extracted on each side of a breakend (BAM only).
+        #[arg(short = 'f', long = "flank", default_value_t = 250)]
+        flank: i64,
+
+        /// Maximum extracted sequence length; longer windows omit eseq (BAM only).
+        #[arg(short = 'e', long = "max-eseq", default_value_t = 1000)]
+        max_eseq: i64,
     },
 }
 
@@ -53,6 +61,8 @@ fn main() -> ExitCode {
             min_clip,
             min_mapq,
             min_aln_len,
+            flank,
+            max_eseq,
         } => {
             // With no input file, show the subcommand help rather than blocking
             // on stdin. Only an explicit "-" reads from stdin.
@@ -72,6 +82,8 @@ fn main() -> ExitCode {
                 min_clip,
                 min_mapq,
                 min_aln_len,
+                flank,
+                max_eseq,
             })
         }
     };

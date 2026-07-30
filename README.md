@@ -33,6 +33,8 @@ Options:
 | `-c`, `--min-clip <INT>` | `100` | Minimum clip length to report a clip breakend. |
 | `-q`, `--min-mapq <INT>` | `0` | Drop hits with mapping quality below this value. |
 | `-a`, `--min-aln-len <INT>` | `0` | Drop hits whose alignment block length (PAF col 11) is below this value. |
+| `-f`, `--flank <INT>` | `250` | Flanking read sequence extracted on each side of a breakend (BAM only). |
+| `-e`, `--max-eseq <INT>` | `1000` | Maximum extracted window; longer windows omit `eseq` (BAM only). |
 
 Examples:
 
@@ -62,13 +64,13 @@ BAM and PAF produce the same output for the same alignments, with one caveat:
 Tab-delimited, 9 columns:
 
 ```
-ctg1   pos1   ori   ctg2   pos2   qname   mapq   strand   aln_len=..;qlen=..;mapq=..
+ctg1   pos1   ori   ctg2   pos2   qname   mapq   strand   aln_len=..;qlen=..;mapq=..[;elen=..;eseq=..]
 ```
 
 `ori` is two characters, each `>` or `<` (or `.` for a missing mate).
-Positions are raw 0-based offsets that sit *between* bases. The final INFO
-column carries three tags, all in output order (index 1 ↔ `ctg1:pos1`,
-index 2 ↔ `ctg2:pos2`):
+Positions are raw 0-based offsets that sit *between* bases. The INFO column's
+first three tags are in output order (index 1 ↔ `ctg1:pos1`, index 2 ↔
+`ctg2:pos2`):
 
 - `aln_len=len1,len2` — alignment length (PAF column 11) of each hit; a clip has
   no second hit, so `len2 = 0`.
@@ -77,6 +79,15 @@ index 2 ↔ `ctg2:pos2`):
   is the (possibly negative) query gap between the two hits.
 - `mapq=mapq1,mapq2` — mapq of each hit; for a clip `mapq2 = 0`. (The `mapq`
   *column* above is the smaller of a join's two mapqs; this tag keeps both.)
+
+The last two tags are **BAM only** (PAF has no read sequence), in read-forward
+orientation (not flipped with the output):
+
+- `elen=leftFlank,qdist,rightFlank` — sizes of the extracted window: up to `-f`
+  bases either side of the junction (`qdist` is the query gap, `0` for a clip),
+  so `|eseq| = leftFlank + |qdist| + rightFlank`.
+- `eseq=<bases>` — the read sequence over that window, on the **original read
+  strand**. Omitted (while `elen` stays) when the window exceeds `-e`.
 
 - **Clip** — one side is a real breakend, the other is nothing (`.`):
 

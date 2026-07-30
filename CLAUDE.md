@@ -59,6 +59,17 @@ Within a read, hits are sorted by query start `qs`. Filtering is off by default:
 block length (PAF col 11, the `alen` field) is below a threshold (default 0).
 The clip threshold is `-c` (default 100).
 
+**eseq/elen (BAM only).** With the read sequence available, each breakend also
+gets a window around the junction: read-forward `[max(lo-f,0), min(hi+f,qlen)]`
+where `lo=min(y0.qe,y1.qs)`, `hi=max(..)` for a join (`lo=hi=p`, the clip point
+`first.qs`/`last.qe`, for a clip). `-f` (default 250) is the flank, `-e` (default
+1000) the max window. `elen=leftFlank,qdist,rightFlank` is always emitted (BAM);
+`eseq=<bases>` is appended only when the window `<= -e`. Both are read-forward
+(NOT flipped with the output, unlike `qlen`). `eseq` is on the original read
+strand: the primary `SEQ` reverse-complemented iff the primary is reverse-mapped
+(`src/bam.rs::revcomp`), usable only when `SEQ.len()==qlen` (soft-clipped
+primary). See `src/extract.rs::eseq_info`.
+
 ### BAM vs PAF parity
 
 For the same alignments the output is identical except `aln_len` of supplementary
@@ -71,13 +82,13 @@ both emit 1009 lines; the diff after masking `aln_len` is empty.)
 ### Output (9 columns, TAB-delimited)
 
 ```
-ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  aln_len=..;qlen=..;mapq=..
+ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  aln_len=..;qlen=..;mapq=..[;elen=..;eseq=..]
 ```
 
-`ori` is two characters, each `>`/`<`, or `.` for a missing mate. The final INFO
-column carries three `;`-separated tags, all keyed to **output order** — index 1
-tracks `ctg1:pos1`, index 2 tracks `ctg2:pos2` — so their values swap with the
-endpoints when a join is flipped:
+`ori` is two characters, each `>`/`<`, or `.` for a missing mate. The INFO
+column's first three tags are keyed to **output order** — index 1 tracks
+`ctg1:pos1`, index 2 tracks `ctg2:pos2` — so their values swap with the endpoints
+when a join is flipped (`elen`/`eseq`, appended for BAM, do not swap):
 
 - `aln_len=len1,len2` — alignment block length (PAF col 11) of each hit; for a
   clip `len2 = 0`.
@@ -112,8 +123,9 @@ from badclip's — e.g. minisv's `aln_len` uses query-span in read order, badcli
 uses PAF col-11 block length in output order. So tests compare against each
 `.msv` truncated to its first 8 columns with badclip's own INFO column
 (`aln_len=...;qlen=...;mapq=...`) appended (see `tests/extract.rs`). BAM fixtures
-(`test/bam01.bam`, `test/bam01.srt.bam`) are compared against a frozen expected
-string; `test/bam01.paf` is the single-alignment read used for BAM/PAF parity;
+(`test/bam01.bam`, `test/bam01.srt.bam`, three reads) are compared against the
+committed golden output `test/bam01.expected` (eseq bytes verified against
+samtools); `test/bam01.paf` is the single-alignment read used for BAM/PAF parity;
 `test/inv01.paf` is a `tp:A:I` inversion read (two joins).
 
 ## Not implemented (deliberately, for now)

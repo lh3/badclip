@@ -47,9 +47,15 @@ fn run_extract_file_args(name: &str, args: &[&str]) -> String {
 
 /// Run `badclip extract <bam>` and return its stdout (BAM is the default input).
 fn run_extract_bam(name: &str) -> String {
+    run_extract_bam_args(name, &[])
+}
+
+/// Run `badclip extract [args...] <bam>` and return its stdout.
+fn run_extract_bam_args(name: &str, args: &[&str]) -> String {
     let bam = test_dir().join(format!("{name}.bam"));
     let output = Command::new(env!("CARGO_BIN_EXE_badclip"))
         .arg("extract")
+        .args(args)
         .arg(&bam)
         .output()
         .expect("failed to run badclip");
@@ -205,19 +211,17 @@ chr10\t91443587\t><\tchr10\t91446029\tm84039_230117_233243_s1/251662187/ccs\t60\
 
 // --- BAM input ---
 
-// bam01.bam holds two reads: a 3-hit chimera (.../234884627/ccs -> 1 left clip
-// + 2 joins) and a single-alignment read with a long clip (.../234884533/ccs,
-// no SA tag -> one end-clip). Coordinates were cross-checked against the PAF.
-const BAM01_EXPECTED: &str = "\
-chr17\t50041122\t<.\t.\t.\tm84039_230117_233243_s1/234884533/ccs\t60\t-\taln_len=14487,0;qlen=14396,0,411;mapq=60,0
-chr17\t26166413\t<.\t.\t.\tm84039_230117_233243_s1/234884627/ccs\t2\t+\taln_len=4538,0;qlen=16257,0,663;mapq=2,0
-chr17\t26164871\t<<\tchr17\t26170946\tm84039_230117_233243_s1/234884627/ccs\t1\t-\taln_len=4468,4538;qlen=15078,-3359,5201;mapq=1,2
-chr13\t17090853\t<<\tchr17\t26169339\tm84039_230117_233243_s1/234884627/ccs\t1\t-\taln_len=6656,4468;qlen=6651,3964,6305;mapq=1,1
-";
+// bam01.bam holds three reads: a 3-hit chimera (.../234884627/ccs -> 1 left clip
+// + 2 joins whose gaps exceed -e, so eseq is dropped but elen kept), a
+// single-alignment read with a long clip (.../234884533/ccs), and a
+// reverse-strand 2-hit translocation (.../240521013/ccs, join eseq present ->
+// exercises reverse-complementing). Expected output is the committed golden file
+// test/bam01.expected (eseq bytes verified against samtools).
 
 #[test]
 fn bam_matches() {
-    assert_eq!(run_extract_bam("bam01"), BAM01_EXPECTED);
+    let expected = std::fs::read_to_string(test_dir().join("bam01.expected")).unwrap();
+    assert_eq!(run_extract_bam("bam01"), expected);
 }
 
 #[test]
@@ -236,13 +240,70 @@ fn bam_sorted_equals_unsorted() {
 
 #[test]
 fn bam_paf_parity_single_hit() {
-    // For a single-alignment read (no supplementary hits), BAM and PAF output
-    // is byte-identical, aln_len included. bam01.paf is that read's PAF line.
+    // For a single-alignment read (no supplementary hits), BAM and PAF agree on
+    // everything up to the BAM-only elen/eseq tags. bam01.paf is that read's PAF
+    // line; strip the elen/eseq suffix from the BAM line before comparing.
     let paf_out = run_extract_file("bam01");
     let bam_line = run_extract_bam("bam01")
         .lines()
         .find(|l| l.contains("234884533"))
         .expect("single-hit read missing from BAM output")
         .to_string();
-    assert_eq!(paf_out, format!("{bam_line}\n"));
+    let bam_trimmed = bam_line.split(";elen=").next().unwrap();
+    assert_eq!(paf_out.trim_end(), bam_trimmed);
+}
+
+/// Parse the `elen=l,q,r` and optional `eseq=..` from a record's INFO column.
+fn parse_elen_eseq(line: &str) -> Option<((i64, i64, i64), Option<String>)> {
+    let info = line.split('\t').nth(8)?;
+    let mut elen = None;
+    let mut eseq = None;
+    for kv in info.split(';') {
+        if let Some(v) = kv.strip_prefix("elen=") {
+            let n: Vec<i64> = v.split(',').map(|x| x.parse().unwrap()).collect();
+            elen = Some((n[0], n[1], n[2]));
+        } else if let Some(v) = kv.strip_prefix("eseq=") {
+            eseq = Some(v.to_string());
+        }
+    }
+    elen.map(|e| (e, eseq))
+}
+
+#[test]
+fn bam_eseq_invariants() {
+    // Every BAM line has elen; eseq is present iff the window (left+|qdist|+right)
+    // is within the default -e (1000), and then its length equals that window.
+    let out = run_extract_bam("bam01");
+    let mut saw_present = false;
+    let mut saw_dropped = false;
+    for line in out.lines() {
+        let ((l, q, r), eseq) = parse_elen_eseq(line).expect("BAM line missing elen");
+        let window = l + q.abs() + r;
+        match eseq {
+            Some(s) => {
+                assert!(window <= 1000, "eseq present but window {window} > 1000");
+                assert_eq!(s.len() as i64, window, "eseq length != elen window");
+                saw_present = true;
+            }
+            None => {
+                assert!(window > 1000, "eseq dropped but window {window} <= 1000");
+                saw_dropped = true;
+            }
+        }
+    }
+    assert!(
+        saw_present && saw_dropped,
+        "fixture should cover both cases"
+    );
+}
+
+#[test]
+fn bam_eseq_dropped_when_over_limit() {
+    // With -e 0 every window exceeds the limit, so no eseq is emitted, but elen
+    // is still present on every line.
+    let out = run_extract_bam_args("bam01", &["-e", "0"]);
+    for line in out.lines() {
+        let (_, eseq) = parse_elen_eseq(line).expect("BAM line missing elen");
+        assert!(eseq.is_none(), "eseq should be dropped with -e 0: {line}");
+    }
 }
