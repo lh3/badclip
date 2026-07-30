@@ -26,16 +26,17 @@ fn expected(name: &str, info: &[&str]) -> String {
     out
 }
 
-/// Run `badclip extract <paf>` and return its stdout.
+/// Run `badclip extract --paf <paf>` and return its stdout.
 fn run_extract_file(name: &str) -> String {
     run_extract_file_args(name, &[])
 }
 
-/// Run `badclip extract [args...] <paf>` and return its stdout.
+/// Run `badclip extract --paf [args...] <paf>` and return its stdout.
 fn run_extract_file_args(name: &str, args: &[&str]) -> String {
     let paf = test_dir().join(format!("{name}.paf"));
     let output = Command::new(env!("CARGO_BIN_EXE_badclip"))
         .arg("extract")
+        .arg("--paf")
         .args(args)
         .arg(&paf)
         .output()
@@ -44,10 +45,27 @@ fn run_extract_file_args(name: &str, args: &[&str]) -> String {
     String::from_utf8(output.stdout).unwrap()
 }
 
-/// Run `badclip extract -` feeding `bytes` on stdin.
+/// Run `badclip extract <bam>` and return its stdout (BAM is the default input).
+fn run_extract_bam(name: &str) -> String {
+    let bam = test_dir().join(format!("{name}.bam"));
+    let output = Command::new(env!("CARGO_BIN_EXE_badclip"))
+        .arg("extract")
+        .arg(&bam)
+        .output()
+        .expect("failed to run badclip");
+    assert!(
+        output.status.success(),
+        "badclip failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+/// Run `badclip extract --paf -` feeding `bytes` on stdin.
 fn run_extract_stdin(bytes: &[u8]) -> String {
     let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
         .arg("extract")
+        .arg("--paf")
         .arg("-")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -171,4 +189,60 @@ fn gzip_is_detected() {
             &["aln_len=16881,2475;qlen=16848,15,2474;mapq=60,60"]
         )
     );
+}
+
+#[test]
+fn paf_keeps_inversion() {
+    // inv01.paf is a 3-hit inversion read (chr10 tp:A:P -, tp:A:I +, tp:A:P -).
+    // Keeping the tp:A:I line yields two joins (the inverted middle segment),
+    // matching what BAM produces from the SA tag.
+    let expected = "\
+chr10\t91443587\t<>\tchr10\t91446029\tm84039_230117_233243_s1/251662187/ccs\t60\t-\taln_len=2443,19097;qlen=2926,0,19078;mapq=60,60
+chr10\t91443587\t><\tchr10\t91446029\tm84039_230117_233243_s1/251662187/ccs\t60\t-\taln_len=485,2443;qlen=485,0,21519;mapq=60,60
+";
+    assert_eq!(run_extract_file("inv01"), expected);
+}
+
+// --- BAM input ---
+
+// bam01.bam holds two reads: a 3-hit chimera (.../234884627/ccs -> 1 left clip
+// + 2 joins) and a single-alignment read with a long clip (.../234884533/ccs,
+// no SA tag -> one end-clip). Coordinates were cross-checked against the PAF.
+const BAM01_EXPECTED: &str = "\
+chr17\t50041122\t<.\t.\t.\tm84039_230117_233243_s1/234884533/ccs\t60\t-\taln_len=14487,0;qlen=14396,0,411;mapq=60,0
+chr17\t26166413\t<.\t.\t.\tm84039_230117_233243_s1/234884627/ccs\t2\t+\taln_len=4538,0;qlen=16257,0,663;mapq=2,0
+chr17\t26164871\t<<\tchr17\t26170946\tm84039_230117_233243_s1/234884627/ccs\t1\t-\taln_len=4468,4538;qlen=15078,-3359,5201;mapq=1,2
+chr13\t17090853\t<<\tchr17\t26169339\tm84039_230117_233243_s1/234884627/ccs\t1\t-\taln_len=6656,4468;qlen=6651,3964,6305;mapq=1,1
+";
+
+#[test]
+fn bam_matches() {
+    assert_eq!(run_extract_bam("bam01"), BAM01_EXPECTED);
+}
+
+#[test]
+fn bam_sorted_equals_unsorted() {
+    // The SA-tag approach needs no grouping, so a coordinate-sorted BAM yields
+    // the same breakend set (different line order).
+    let mut unsorted: Vec<String> = run_extract_bam("bam01").lines().map(String::from).collect();
+    let mut sorted: Vec<String> = run_extract_bam("bam01.srt")
+        .lines()
+        .map(String::from)
+        .collect();
+    unsorted.sort();
+    sorted.sort();
+    assert_eq!(unsorted, sorted);
+}
+
+#[test]
+fn bam_paf_parity_single_hit() {
+    // For a single-alignment read (no supplementary hits), BAM and PAF output
+    // is byte-identical, aln_len included. bam01.paf is that read's PAF line.
+    let paf_out = run_extract_file("bam01");
+    let bam_line = run_extract_bam("bam01")
+        .lines()
+        .find(|l| l.contains("234884533"))
+        .expect("single-hit read missing from BAM output")
+        .to_string();
+    assert_eq!(paf_out, format!("{bam_line}\n"));
 }

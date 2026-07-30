@@ -18,18 +18,18 @@ cargo build --release
 ## Usage
 
 ```sh
-badclip extract [OPTIONS] [PAF]
+badclip extract [OPTIONS] [INPUT]
 ```
 
-- `PAF` — input alignments in PAF format. Pass `-` to read from stdin. Gzip'd
-  input is detected and decompressed automatically, whether from a file or
-  stdin. Running `badclip extract` with no input prints this help instead of
-  waiting on stdin.
+- `INPUT` — alignments in **BAM** by default, or **PAF** with `--paf`. Pass `-`
+  to read from stdin. PAF input may be gzip'd (auto-detected). Running `badclip
+  extract` with no input prints this help instead of waiting on stdin.
 
 Options:
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `--paf` | off | Read PAF (optionally gzip'd) instead of BAM. |
 | `-c`, `--min-clip <INT>` | `100` | Minimum clip length to report a clip breakend. |
 | `-q`, `--min-mapq <INT>` | `0` | Drop hits with mapping quality below this value. |
 | `-a`, `--min-aln-len <INT>` | `0` | Drop hits whose alignment block length (PAF col 11) is below this value. |
@@ -37,18 +37,25 @@ Options:
 Examples:
 
 ```sh
-badclip extract aln.paf
-badclip extract aln.paf.gz
-minimap2 ... | badclip extract -         # stdin
-gzip -dc aln.paf.gz | badclip extract -  # stdin (also auto-detects gzip)
+badclip extract aln.bam                   # BAM (default), sorted or unsorted
+samtools view -b … | badclip extract -    # BAM from stdin
+badclip extract --paf aln.paf.gz          # PAF (gzip auto-detected)
+minimap2 … | badclip extract --paf -      # PAF from stdin
 ```
 
 ### Input assumptions
 
-- Alignments are grouped by read name (as produced directly by minimap2).
-- Only primary and supplementary alignments (`tp:A:P`) are used; secondary
-  alignments are ignored.
+- **BAM**: a read's chimeric hits are read from the primary alignment's `SA:Z:`
+  tag; secondary/supplementary/unmapped records are ignored. Works on both
+  coordinate-sorted and name-grouped BAM (no grouping required).
+- **PAF**: alignments are grouped by read name (as produced directly by
+  minimap2); primary/supplementary (`tp:A:P`) and inversion (`tp:A:I`)
+  alignments are used, secondary (`tp:A:S`) are ignored.
 - Within a read, hits are sorted by their start position along the read.
+
+BAM and PAF produce the same output for the same alignments, with one caveat:
+`aln_len` for supplementary hits is a few bp smaller from BAM because minimap2's
+`SA` CIGAR is collapsed (the primary hit's `aln_len` matches).
 
 ## Output
 
@@ -93,5 +100,5 @@ index 2 ↔ `ctg2:pos2`):
 
 ## Status
 
-PAF input is implemented. BAM input is planned and will reuse the same breakend
-logic. See `CLAUDE.md` for internals and the interval/offset convention.
+BAM (default) and PAF (`--paf`) input are implemented and share the same
+breakend logic. See `CLAUDE.md` for internals and the interval/offset convention.

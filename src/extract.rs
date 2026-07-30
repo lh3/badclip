@@ -31,12 +31,19 @@ use crate::paf::{Hit, Strand, parse_paf_line};
 pub struct ExtractOpts {
     /// Input path; `"-"` means stdin.
     pub input: String,
+    /// Read PAF instead of BAM.
+    pub paf: bool,
     /// Minimum clip length to report a clip breakend.
     pub min_clip: i64,
     /// Drop hits with mapq below this value (0 = keep everything).
     pub min_mapq: i64,
     /// Drop hits whose alignment block length is below this (0 = keep all).
     pub min_aln_len: i64,
+}
+
+/// Whether a hit passes the mapq / alignment-length filters.
+pub(crate) fn passes_filter(h: &Hit, opts: &ExtractOpts) -> bool {
+    h.mapq >= opts.min_mapq && h.alen >= opts.min_aln_len
 }
 
 impl Hit {
@@ -75,22 +82,26 @@ fn flip(ori: char) -> char {
 
 /// Run the extract command end to end.
 pub fn run(opts: &ExtractOpts) -> io::Result<()> {
-    let reader = open_reader(&opts.input)?;
     let stdout = io::stdout();
     let mut out = io::BufWriter::new(stdout.lock());
-    extract(reader, opts, &mut out)
+    if opts.paf {
+        let reader = open_reader(&opts.input)?;
+        run_paf(reader, opts, &mut out)
+    } else {
+        crate::bam::run_bam(&opts.input, opts, &mut out)
+    }
 }
 
-/// Stream `reader`, grouping hits by read name (input is assumed grouped),
+/// Stream a PAF `reader`, grouping hits by read name (input is assumed grouped),
 /// and emit breakends for each read.
-fn extract(reader: Box<dyn BufRead>, opts: &ExtractOpts, out: &mut impl Write) -> io::Result<()> {
+fn run_paf(reader: Box<dyn BufRead>, opts: &ExtractOpts, out: &mut impl Write) -> io::Result<()> {
     let mut group: Vec<Hit> = Vec::new();
     for line in reader.lines() {
         let line = line?;
         let Some(hit) = parse_paf_line(&line) else {
             continue;
         };
-        if hit.mapq < opts.min_mapq || hit.alen < opts.min_aln_len {
+        if !passes_filter(&hit, opts) {
             continue;
         }
         if let Some(first) = group.first()
@@ -105,8 +116,12 @@ fn extract(reader: Box<dyn BufRead>, opts: &ExtractOpts, out: &mut impl Write) -
     Ok(())
 }
 
-/// Emit clip and join breakends for one read's hits.
-fn emit_read(hits: &mut [Hit], opts: &ExtractOpts, out: &mut impl Write) -> io::Result<()> {
+/// Emit clip and join breakends for one read's hits (sorted here by `qs`).
+pub(crate) fn emit_read(
+    hits: &mut [Hit],
+    opts: &ExtractOpts,
+    out: &mut impl Write,
+) -> io::Result<()> {
     if hits.is_empty() {
         return Ok(());
     }

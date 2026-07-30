@@ -15,17 +15,19 @@ fixtures are authoritative.
 ```sh
 cargo build            # debug binary at target/debug/badclip
 cargo test             # runs tests/extract.rs against the fixtures
-cargo run -- extract test/join02.paf
+cargo run -- extract test/bam01.bam          # BAM (default)
+cargo run -- extract --paf test/join02.paf   # PAF
 ```
 
 ## Layout
 
 - `src/main.rs`   — clap CLI, subcommand dispatch. New subcommands slot in here.
-- `src/io.rs`     — `open_reader`: stdin/file + transparent gzip (magic-byte peek).
+- `src/io.rs`     — `open_reader`: stdin/file + transparent gzip (magic-byte peek); PAF only.
 - `src/paf.rs`    — `Hit` struct, `Strand`, `parse_paf_line` (keeps only `tp:A:P`).
-- `src/extract.rs`— the `extract` command: grouping, sorting, clip/join emission.
+- `src/bam.rs`    — BAM input via noodles: build `Hit`s from a primary record + its `SA` tag.
+- `src/extract.rs`— dispatch (BAM vs `--paf`), grouping, sorting, clip/join emission; shared `emit_read`/`passes_filter`.
 - `tests/extract.rs` — end-to-end tests driving the compiled binary.
-- `test/`         — `*.paf` inputs, `*.msv` expected outputs, `minisv.js` reference.
+- `test/`         — `*.paf` inputs, `*.msv` (minisv) references, `bam01*.bam` fixtures, `minisv.js`.
 
 ## Interval / offset notation
 
@@ -37,12 +39,34 @@ interval `|qs,qe|` on a strand. Emitted positions are raw 0-based offsets — no
 
 ## `extract` — behaviour
 
-Input PAF is assumed grouped by read name. Hits are streamed and buffered per
-read, keeping only primary/supplementary alignments (`tp:A:P`). Within a read,
-hits are sorted by query start `qs`. Filtering is off by default: `-q` drops
-hits below a mapq (default 0) and `-a` drops hits whose alignment block length
-(PAF col 11, the `alen` field) is below a threshold (default 0). The clip
-threshold is `-c` (default 100).
+Input is **BAM by default**, or **PAF with `--paf`**. `-` reads stdin (no input
+at all → print help, don't block on stdin). Both paths build a `Vec<Hit>` per
+read and feed the shared `emit_read`.
+
+- **PAF** (`src/extract.rs::run_paf`): assumed grouped by read name; streamed and
+  buffered per read, keeping `tp:A:P` (primary/supplementary) and `tp:A:I`
+  (inversion), dropping `tp:A:S`. One hit per line.
+- **BAM** (`src/bam.rs::run_bam`): iterate primary records only (skip
+  secondary/supplementary/unmapped). Each read's hits = the primary (from its
+  own CIGAR) + one per `SA:Z:` entry. No grouping needed, so sorted and
+  name-grouped BAM both work. Coordinates are computed to match PAF exactly
+  (`span_from_ops`): `qspan/refspan/alen` from the CIGAR, `lead/tail` clips,
+  `qlen=lead+qspan+tail`, `qs = +?lead:tail`, `qe=qs+qspan`, `ts=pos0`,
+  `te=pos0+refspan`. noodles crates: bam 0.92 / sam 0.87 / core 0.20.
+
+Within a read, hits are sorted by query start `qs`. Filtering is off by default:
+`-q` drops hits below a mapq (default 0) and `-a` drops hits whose alignment
+block length (PAF col 11, the `alen` field) is below a threshold (default 0).
+The clip threshold is `-c` (default 100).
+
+### BAM vs PAF parity
+
+For the same alignments the output is identical except `aln_len` of supplementary
+(SA-derived) hits, which is a few bp smaller from BAM because minimap2's `SA`
+CIGAR merges small indels (the primary hit's `aln_len` matches PAF). Everything
+else — line count, offsets, `ori`, `strand`, `qlen`, `mapq`, clip/join logic,
+and inversion (`tp:A:I`) segments — matches exactly. (Verified on the test data:
+both emit 1009 lines; the diff after masking `aln_len` is empty.)
 
 ### Output (9 columns, TAB-delimited)
 
@@ -87,12 +111,13 @@ The `test/join*.msv` files carry an INFO column
 from badclip's — e.g. minisv's `aln_len` uses query-span in read order, badclip
 uses PAF col-11 block length in output order. So tests compare against each
 `.msv` truncated to its first 8 columns with badclip's own INFO column
-(`aln_len=...;qlen=...`) appended (see `tests/extract.rs`).
+(`aln_len=...;qlen=...;mapq=...`) appended (see `tests/extract.rs`). BAM fixtures
+(`test/bam01.bam`, `test/bam01.srt.bam`) are compared against a frozen expected
+string; `test/bam01.paf` is the single-alignment read used for BAM/PAF parity;
+`test/inv01.paf` is a `tp:A:I` inversion read (two joins).
 
 ## Not implemented (deliberately, for now)
 
-- BAM input (planned next; will convert BAM records into the same `Hit` and
-  reuse `extract.rs`).
 - CIGAR-based indel (INS/DEL) extraction.
 - Same-contig SV typing (INS/DEL/DUP/INV) and the trailing INFO column — always
   emits `BND`-style orientation regardless of contig.

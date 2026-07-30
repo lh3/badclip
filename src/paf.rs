@@ -41,9 +41,9 @@ pub struct Hit {
 
 /// Parse a single PAF line into a [`Hit`].
 ///
-/// Returns `None` when the line is not a usable primary/supplementary
-/// alignment: too few columns, a non-`+/-` strand field, unparseable
-/// coordinates, or an alignment-type tag (`tp:A:`) that is not `P`.
+/// Returns `None` when the line is not a usable alignment: too few columns, a
+/// non-`+/-` strand field, unparseable coordinates, or an alignment-type tag
+/// (`tp:A:`) that is neither `P` (primary/supplementary) nor `I` (inversion).
 pub fn parse_paf_line(line: &str) -> Option<Hit> {
     let t: Vec<&str> = line.split('\t').collect();
     // PAF has at least 12 mandatory columns.
@@ -57,18 +57,19 @@ pub fn parse_paf_line(line: &str) -> Option<Hit> {
         _ => return None,
     };
 
-    // Keep only primary/supplementary alignments (tp:A:P). minimap2 marks both
-    // primary and supplementary chimeric segments with tp:A:P; secondary
-    // alignments carry tp:A:S. Lines without a tp tag are dropped as well,
-    // matching the reference behaviour.
-    let mut is_primary = false;
+    // Keep primary/supplementary (tp:A:P) and inversion (tp:A:I) alignments.
+    // minimap2 marks primary and supplementary chimeric segments with tp:A:P and
+    // the inverted middle segment of an inversion with tp:A:I; both are real
+    // hits for breakend calling (and BAM exposes the inversion via the SA tag).
+    // Secondary (tp:A:S) and tp-less lines are dropped.
+    let mut keep = false;
     for tag in &t[12..] {
         if let Some(rest) = tag.strip_prefix("tp:A:") {
-            is_primary = rest == "P";
+            keep = rest == "P" || rest == "I";
             break;
         }
     }
-    if !is_primary {
+    if !keep {
         return None;
     }
 

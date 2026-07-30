@@ -1,6 +1,7 @@
 //! badclip — extract breakends and structural-variant signals from long-read
 //! alignments.
 
+mod bam;
 mod extract;
 mod io;
 mod paf;
@@ -20,10 +21,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Extract breakends from read alignments in PAF format.
+    /// Extract breakends from read alignments in BAM (or PAF) format.
     Extract {
-        /// Input PAF (optionally gzip'd). Use "-" to read from stdin.
+        /// Input alignments: BAM by default, or PAF with --paf. Use "-" for stdin.
         input: Option<String>,
+
+        /// Read PAF (optionally gzip'd) instead of BAM.
+        #[arg(long)]
+        paf: bool,
 
         /// Minimum clip length to report a clip breakend.
         #[arg(short = 'c', long = "min-clip", default_value_t = 100)]
@@ -44,6 +49,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Extract {
             input,
+            paf,
             min_clip,
             min_mapq,
             min_aln_len,
@@ -62,6 +68,7 @@ fn main() -> ExitCode {
             };
             extract::run(&ExtractOpts {
                 input,
+                paf,
                 min_clip,
                 min_mapq,
                 min_aln_len,
