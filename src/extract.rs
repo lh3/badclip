@@ -3,14 +3,17 @@
 //! A read may map as several chimeric hits. Sorted along the read, each read
 //! end that is soft-clipped away from an alignment produces a *clip* breakend
 //! (connected to nothing), and each junction between two adjacent hits
-//! produces a *join* breakend. All records share one 8-column, TAB-delimited
+//! produces a *join* breakend. All records share one 9-column, TAB-delimited
 //! layout:
 //!
 //! ```text
-//! ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand
+//! ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  aln_len=len1,len2
 //! ```
 //!
-//! where `ori` is two characters, each `>`/`<`, or `.` for a missing mate.
+//! where `ori` is two characters, each `>`/`<`, or `.` for a missing mate. The
+//! final INFO column carries `aln_len=len1,len2`, the alignment block lengths
+//! (PAF col 11) of the hits at `ctg1:pos1` and `ctg2:pos2`; for a clip `len2`
+//! is `0`.
 
 use std::io::{self, BufRead, Write};
 
@@ -128,13 +131,14 @@ fn emit_read(hits: &mut [Hit], opts: &ExtractOpts, out: &mut impl Write) -> io::
 fn emit_clip(out: &mut impl Write, h: &Hit, pos: i64, arrow: char) -> io::Result<()> {
     writeln!(
         out,
-        "{}\t{}\t{}.\t.\t.\t{}\t{}\t{}",
+        "{}\t{}\t{}.\t.\t.\t{}\t{}\t{}\taln_len={},0",
         h.ctg,
         pos,
         arrow,
         h.qname,
         h.mapq,
         h.strand.as_char(),
+        h.alen,
     )
 }
 
@@ -142,16 +146,18 @@ fn emit_clip(out: &mut impl Write, h: &Hit, pos: i64, arrow: char) -> io::Result
 fn emit_join(out: &mut impl Write, y0: &Hit, y1: &Hit) -> io::Result<()> {
     // Endpoints: read-end side of the upstream hit joins the read-start side
     // of the downstream hit.
-    let (mut ctg0, mut pos0, mut o0) = (y0.ctg.as_str(), y0.fte(), y0.ori());
-    let (mut ctg1, mut pos1, mut o1) = (y1.ctg.as_str(), y1.fts(), y1.ori());
+    let (mut ctg0, mut pos0, mut o0, mut len0) = (y0.ctg.as_str(), y0.fte(), y0.ori(), y0.alen);
+    let (mut ctg1, mut pos1, mut o1, mut len1) = (y1.ctg.as_str(), y1.fts(), y1.ori(), y1.alen);
 
     // Canonicalize so the smaller (contig, pos) comes first. When we flip, both
-    // orientation markers invert and the record's strand column becomes '-'.
+    // orientation markers invert and the record's strand column becomes '-';
+    // the alignment lengths swap too so `aln_len` follows the output order.
     let mut strand = '+';
     if !(ctg0 < ctg1 || (ctg0 == ctg1 && pos0 < pos1)) {
         let (no0, no1) = (flip(o1), flip(o0));
         std::mem::swap(&mut ctg0, &mut ctg1);
         std::mem::swap(&mut pos0, &mut pos1);
+        std::mem::swap(&mut len0, &mut len1);
         o0 = no0;
         o1 = no1;
         strand = '-';
@@ -160,7 +166,7 @@ fn emit_join(out: &mut impl Write, y0: &Hit, y1: &Hit) -> io::Result<()> {
     let mapq = y0.mapq.min(y1.mapq);
     writeln!(
         out,
-        "{}\t{}\t{}{}\t{}\t{}\t{}\t{}\t{}",
-        ctg0, pos0, o0, o1, ctg1, pos1, y0.qname, mapq, strand,
+        "{}\t{}\t{}{}\t{}\t{}\t{}\t{}\t{}\taln_len={},{}",
+        ctg0, pos0, o0, o1, ctg1, pos1, y0.qname, mapq, strand, len0, len1,
     )
 }

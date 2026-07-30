@@ -34,6 +34,8 @@ pub struct Hit {
     pub ctg: String,
     pub ts: i64,
     pub te: i64,
+    /// Alignment block length (PAF column 11).
+    pub alen: i64,
     pub mapq: i64,
 }
 
@@ -79,6 +81,7 @@ pub fn parse_paf_line(line: &str) -> Option<Hit> {
         ctg: t[5].to_string(),
         ts: t[7].parse().ok()?,
         te: t[8].parse().ok()?,
+        alen: t[10].parse().ok()?,
         mapq: t[11].parse().ok()?,
     })
 }
