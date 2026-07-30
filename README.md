@@ -1,3 +1,6 @@
+> [!Warning]
+> This project is vibe coded with Claude Code.
+
 # badclip
 
 Extract breakends and structural-variant signals from long-read alignments.
