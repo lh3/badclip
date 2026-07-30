@@ -111,7 +111,27 @@ orientation (not flipped with the output):
   means the **left** side of `chr13:51911798` joins the **left** side of
   `chr2:76026062`.
 
+## `geteseq`
+
+Convert `extract` output into a FASTA of the extracted breakend sequences. For
+each record that has an `eseq` tag, it writes one FASTA entry named
+`readName_idx_leftFlank_rightFlank` (from the `idx` and `elen` tags) with the
+`eseq` bases; records without `eseq` are skipped.
+
+```sh
+badclip extract aln.bam | badclip geteseq > eseq.fa
+badclip geteseq extract.txt            # or a file ("-" / omitted = stdin)
+```
+
+Example:
+
+```
+>m84039_.../234884533/ccs_0_250_250
+ACTTTGGGAGGCCAAGGCAGGCGGATCACCTG...
+```
+
 ## Status
 
 BAM (default) and PAF (`--paf`) input are implemented and share the same
-breakend logic. See `CLAUDE.md` for internals and the interval/offset convention.
+breakend logic; `geteseq` turns extract output into FASTA. See `CLAUDE.md` for
+internals and the interval/offset convention.

@@ -26,8 +26,16 @@ cargo run -- extract --paf test/join02.paf   # PAF
 - `src/paf.rs`    — `Hit` struct, `Strand`, `parse_paf_line` (keeps only `tp:A:P`).
 - `src/bam.rs`    — BAM input via noodles: build `Hit`s from a primary record + its `SA` tag.
 - `src/extract.rs`— dispatch (BAM vs `--paf`), grouping, sorting, clip/join emission; shared `emit_read`/`passes_filter`.
+- `src/geteseq.rs`— `geteseq` subcommand: `extract` output → FASTA of `eseq` records.
 - `tests/extract.rs` — end-to-end tests driving the compiled binary.
-- `test/`         — `*.paf` inputs, `*.msv` (minisv) references, `bam01*.bam` fixtures, `minisv.js`.
+- `test/`         — `*.paf` inputs, `*.msv` (minisv) references, `bam01*` fixtures/goldens, `minisv.js`.
+
+## `geteseq`
+
+Filters `extract` output (TAB-delimited; `-`/omitted = stdin, gzip auto-detected)
+to FASTA. For each record with an `eseq` tag it emits `>readName_idx_L_R` (from
+the `idx` tag and `elen`'s `leftFlank`/`rightFlank`) followed by the `eseq` bases;
+records lacking `eseq` are skipped. Golden: `test/bam01.fa`.
 
 ## Interval / offset notation
 

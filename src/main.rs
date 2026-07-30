@@ -3,6 +3,7 @@
 
 mod bam;
 mod extract;
+mod geteseq;
 mod io;
 mod paf;
 
@@ -50,6 +51,12 @@ enum Command {
         #[arg(short = 'e', long = "max-eseq", default_value_t = 1000)]
         max_eseq: i64,
     },
+
+    /// Convert `extract` output into a FASTA of extracted breakend sequences.
+    Geteseq {
+        /// Input `extract` output. Omit or use "-" to read from stdin.
+        input: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -86,6 +93,7 @@ fn main() -> ExitCode {
                 max_eseq,
             })
         }
+        Command::Geteseq { input } => geteseq::run(input.as_deref()),
     };
 
     if let Err(e) = result {

@@ -307,3 +307,47 @@ fn bam_eseq_dropped_when_over_limit() {
         assert!(eseq.is_none(), "eseq should be dropped with -e 0: {line}");
     }
 }
+
+// --- geteseq ---
+
+/// Run `badclip geteseq -` feeding `bytes` on stdin.
+fn run_geteseq_stdin(bytes: &[u8]) -> String {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
+        .arg("geteseq")
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn badclip");
+    child.stdin.take().unwrap().write_all(bytes).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "badclip geteseq failed");
+    String::from_utf8(output.stdout).unwrap()
+}
+
+#[test]
+fn geteseq_name_format_and_skips() {
+    // First record has eseq -> FASTA name readName_idx_leftFlank_rightFlank
+    // (idx and elen[0],elen[2]); second lacks eseq -> skipped.
+    let input = "\
+chrA\t100\t>>\tchrB\t200\tread1\t60\t+\tidx=2;aln_len=10,20;qlen=5,3,7;mapq=60,60;elen=5,3,7;eseq=ACGTACGTACGTAAA
+chrC\t9\t<.\t.\t.\tread2\t30\t-\tidx=0;aln_len=8,0;qlen=8,0,2;mapq=30,0;elen=8,0,2
+";
+    assert_eq!(
+        run_geteseq_stdin(input.as_bytes()),
+        ">read1_2_5_7\nACGTACGTACGTAAA\n"
+    );
+}
+
+#[test]
+fn geteseq_matches_golden() {
+    // geteseq over the extract golden output yields the committed FASTA.
+    let out = Command::new(env!("CARGO_BIN_EXE_badclip"))
+        .arg("geteseq")
+        .arg(test_dir().join("bam01.expected"))
+        .output()
+        .expect("failed to run badclip geteseq");
+    assert!(out.status.success());
+    let expected = std::fs::read_to_string(test_dir().join("bam01.fa")).unwrap();
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), expected);
+}
