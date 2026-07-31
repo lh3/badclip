@@ -7,11 +7,12 @@
 //! layout:
 //!
 //! ```text
-//! ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  aln_len=..;qlen=..;mapq=..
+//! ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  source=..;idx=..;aln_len=..;qlen=..;mapq=..
 //! ```
 //!
 //! where `ori` is two characters, each `>`/`<`, or `.` for a missing mate. The
-//! final INFO column carries three tags:
+//! INFO column opens with `source=<name>` (the `-s` dataset label; first only
+//! for readability — tag order is not significant) and `idx`, then three tags:
 //! - `aln_len=len1,len2` — alignment block lengths (PAF col 11) of the hits at
 //!   `ctg1:pos1` and `ctg2:pos2`; for a clip `len2` is `0`.
 //! - `qlen=left,middle,right` — query lengths whose sum is the read length.
@@ -33,6 +34,8 @@ pub struct ExtractOpts {
     pub input: String,
     /// Read PAF instead of BAM.
     pub paf: bool,
+    /// Dataset name, emitted as the `source=` INFO tag on every record.
+    pub source: String,
     /// Minimum clip length to report a clip breakend.
     pub min_clip: i64,
     /// Drop hits with mapq below this value (0 = keep everything).
@@ -241,13 +244,14 @@ fn emit_clip(
     let eseq = eseq_info(read_seq, opts, h.qlen, qpos, qpos, 0);
     writeln!(
         out,
-        "{}\t{}\t{}.\t.\t.\t{}\t{}\t{}\tidx={};aln_len={},0;qlen={},0,{};mapq={},0{}",
+        "{}\t{}\t{}.\t.\t.\t{}\t{}\t{}\tsource={};idx={};aln_len={},0;qlen={},0,{};mapq={},0{}",
         h.ctg,
         pos,
         arrow,
         h.qname,
         h.mapq,
         h.strand.as_char(),
+        opts.source,
         idx,
         h.alen,
         h.qlen - clipped,
@@ -305,7 +309,7 @@ fn emit_join(
     let eseq = eseq_info(read_seq, opts, y0.qlen, lo, hi, mid);
     writeln!(
         out,
-        "{}\t{}\t{}{}\t{}\t{}\t{}\t{}\t{}\tidx={};aln_len={},{};qlen={},{},{};mapq={},{}{}",
+        "{}\t{}\t{}{}\t{}\t{}\t{}\t{}\t{}\tsource={};idx={};aln_len={},{};qlen={},{},{};mapq={},{}{}",
         ctg0,
         pos0,
         o0,
@@ -315,6 +319,7 @@ fn emit_join(
         y0.qname,
         mapq,
         strand,
+        opts.source,
         idx,
         len0,
         len1,

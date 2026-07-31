@@ -126,7 +126,8 @@ read and feed the shared `emit_read`.
 Within a read, hits are sorted by query start `qs`. Filtering is off by default:
 `-q` drops hits below a mapq (default 0) and `-a` drops hits whose alignment
 block length (PAF col 11, the `alen` field) is below a threshold (default 0).
-The clip threshold is `-c` (default 50).
+The clip threshold is `-c` (default 50). `-s` sets the `source=` dataset label
+(default `foo`), stamped on every record (BAM and PAF).
 
 **eseq/elen (BAM only).** With the read sequence available, each breakend also
 gets a window around the junction: read-forward `[max(lo-f,0), min(hi+f,qlen)]`
@@ -151,14 +152,19 @@ both emit 1009 lines; the diff after masking `aln_len` is empty.)
 ### Output (9 columns, TAB-delimited)
 
 ```
-ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  idx=..;aln_len=..;qlen=..;mapq=..[;elen=..;eseq=..]
+ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  source=..;idx=..;aln_len=..;qlen=..;mapq=..[;elen=..;eseq=..]
 ```
 
-`ori` is two characters, each `>`/`<`, or `.` for a missing mate. The INFO
-column starts with `idx`, then three tags keyed to **output order** — index 1
-tracks `ctg1:pos1`, index 2 tracks `ctg2:pos2` — so their values swap with the
-endpoints when a join is flipped (`elen`/`eseq`, appended for BAM, do not swap):
+`ori` is two characters, each `>`/`<`, or `.` for a missing mate. Tag **order in
+the INFO column is not significant** — every consumer parses by key, not
+position — but the emission order is `source`, `idx`, then three tags keyed to
+**output order** — index 1 tracks `ctg1:pos1`, index 2 tracks `ctg2:pos2` — so
+their values swap with the endpoints when a join is flipped (`source` is
+per-read and `elen`/`eseq`, appended for BAM, do not swap):
 
+- `source=NAME` — the `-s` dataset label (default `foo`), for telling reads of
+  different datasets apart (tumor/normal, trio) downstream; written first purely
+  for readability. Same on every record of a run.
 - `idx=N` — 0-based index of this clip/breakend within the read, emission order
   (left clip, joins, right clip); resets per read (`emit_read`'s local counter).
 - `aln_len=len1,len2` — alignment block length (PAF col 11) of each hit; for a

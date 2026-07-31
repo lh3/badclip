@@ -34,6 +34,10 @@ enum Command {
         #[arg(long)]
         paf: bool,
 
+        /// Dataset name, emitted as a `source=` INFO tag on every record.
+        #[arg(short = 's', long = "source", default_value_t = String::from("foo"))]
+        source: String,
+
         /// Minimum clip length to report a clip breakend.
         #[arg(short = 'c', long = "min-clip", default_value_t = 50)]
         min_clip: i64,
@@ -120,6 +124,7 @@ fn main() -> ExitCode {
         Command::Extract {
             input,
             paf,
+            source,
             min_clip,
             min_mapq,
             min_aln_len,
@@ -134,6 +139,7 @@ fn main() -> ExitCode {
             extract::run(&ExtractOpts {
                 input,
                 paf,
+                source,
                 min_clip,
                 min_mapq,
                 min_aln_len,

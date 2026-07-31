@@ -47,6 +47,7 @@ Options:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--paf` | off | Read PAF (optionally gzip'd) instead of BAM. |
+| `-s`, `--source <STR>` | `foo` | Dataset name, stamped on every record as a `source=` INFO tag. |
 | `-c`, `--min-clip <INT>` | `50` | Minimum clip length to report a clip breakend. |
 | `-q`, `--min-mapq <INT>` | `0` | Drop hits with mapping quality below this value. |
 | `-a`, `--min-aln-len <INT>` | `0` | Drop hits whose alignment block length (PAF col 11) is below this value. |
@@ -81,14 +82,18 @@ BAM and PAF produce the same output for the same alignments, with one caveat:
 Tab-delimited, 9 columns:
 
 ```
-ctg1   pos1   ori   ctg2   pos2   qname   mapq   strand   idx=..;aln_len=..;qlen=..;mapq=..[;elen=..;eseq=..]
+ctg1   pos1   ori   ctg2   pos2   qname   mapq   strand   source=..;idx=..;aln_len=..;qlen=..;mapq=..[;elen=..;eseq=..]
 ```
 
 `ori` is two characters, each `>` or `<` (or `.` for a missing mate).
-Positions are raw 0-based offsets that sit *between* bases. The INFO column
-begins with `idx`, then three tags in output order (index 1 ↔ `ctg1:pos1`,
-index 2 ↔ `ctg2:pos2`):
+Positions are raw 0-based offsets that sit *between* bases. The INFO column is a
+list of `key=value` tags; **their order is not significant** (consumers parse by
+key). It is written as `source`, then `idx`, then three tags in output order
+(index 1 ↔ `ctg1:pos1`, index 2 ↔ `ctg2:pos2`):
 
+- `source=NAME` — the `-s` dataset label (default `foo`), for telling reads from
+  different datasets apart (tumor/normal, trio) in downstream tools. Written
+  first only for readability; the same on every record.
 - `idx=N` — 0-based index of this clip/breakend within the read, in emission
   order (left clip, joins, right clip); resets per read.
 - `aln_len=len1,len2` — alignment length (PAF column 11) of each hit; a clip has
@@ -111,16 +116,16 @@ orientation (not flipped with the output):
 - **Clip** — one side is a real breakend, the other is nothing (`.`):
 
   ```
-  chr1   123569841   >.   .   .   read/ccs   1   -   idx=0;aln_len=14732,0;qlen=14925,0,141;mapq=1,0
-  chr1   123555134   <.   .   .   read/ccs   1   -   idx=1;aln_len=14732,0;qlen=14774,0,292;mapq=1,0
+  chr1   123569841   >.   .   .   read/ccs   1   -   source=foo;idx=0;aln_len=14732,0;qlen=14925,0,141;mapq=1,0
+  chr1   123555134   <.   .   .   read/ccs   1   -   source=foo;idx=1;aln_len=14732,0;qlen=14774,0,292;mapq=1,0
   ```
 
 - **Join** — two mapped ends meet. The smaller `(contig, position)` is written
   first; the two arrows show how the sides are oriented:
 
   ```
-  chr1    57375269   >>   chr21   32069271   read/ccs   60   -   idx=0;aln_len=16879,26284;qlen=16808,1,26163;mapq=60,60
-  chr13   51911798   <>   chr2    76026062   read/ccs   60   +   idx=0;aln_len=29505,5668;qlen=29436,1,5661;mapq=60,60
+  chr1    57375269   >>   chr21   32069271   read/ccs   60   -   source=foo;idx=0;aln_len=16879,26284;qlen=16808,1,26163;mapq=60,60
+  chr13   51911798   <>   chr2    76026062   read/ccs   60   +   source=foo;idx=0;aln_len=29505,5668;qlen=29436,1,5661;mapq=60,60
   ```
 
   `chr1:57375269 >> chr21:32069271` means the **right** side of `chr1:57375269`
