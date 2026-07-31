@@ -233,8 +233,12 @@ merge-derived INFO column:
 ctg1   pos1   ori   ctg2   pos2   .   count   strand   avg_mapq=..;count=..[;count_fr=..;count_rf=..[;foldback]];reads=..
 ```
 
-- `count=nFwd,nRev` — supporting reads on each strand (the column-7 `count` is
-  their sum).
+- `count=src:fwd,rev|…` — for each `source=` dataset present in the cluster (from
+  the reads' `source=` tag), its forward,reverse read counts; `|`-joined and
+  sorted alphabetically by source. Only sources actually present are listed
+  (never `x:0,0`), e.g. `count=foo:2,3|retain:4,5`, or `count=foo:2,2` for a
+  single source. The column-7 `count` is the grand total across all sources and
+  strands.
 - `count_fr`, `count_rf` — reads oriented `><` and `<>`; present only when the
   cluster has at least one such read. `foldback` is added when only one of the
   two orientations is present (`count_fr` or `count_rf` is `0`) and both

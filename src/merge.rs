@@ -16,7 +16,7 @@
 //! often matches (`same_sv`), else starts a new cluster. When a cluster falls
 //! out of the window it is emitted if it passes the read-count filters.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, BufRead, Write};
 
 use crate::io::open_reader;
@@ -49,6 +49,7 @@ struct Rec {
     mapq: i64,         // col 6
     strand: u8,        // col 7, b'+' or b'-'
     name: String,      // col 5, qname
+    source: String,    // `source=` INFO tag (col 8); "." if absent
 }
 
 /// An open cluster of records deemed to describe the same breakend.
@@ -80,6 +81,13 @@ fn parse_rec(line: &str) -> Option<Rec> {
         name: f[5].to_string(),
         mapq: f[6].parse().ok()?,
         strand: f[7].bytes().next()?,
+        // Dataset label from the `source=` INFO tag (order-independent); "." when
+        // absent, though extract always emits it.
+        source: f[8]
+            .split(';')
+            .find_map(|kv| kv.strip_prefix("source="))
+            .unwrap_or(".")
+            .to_string(),
     })
 }
 
@@ -122,12 +130,16 @@ fn write_sv(out: &mut impl Write, cl: &Cluster, opts: &MergeOpts) -> io::Result<
     let v = &s[s.len() / 2]; // representative (upper-middle; stable under sort)
 
     let mut mapq_sum = 0i64;
-    let mut cnt = [0i64, 0i64]; // [+, -]
+    let mut cnt = [0i64, 0i64]; // [+, -] cluster totals (for the filter)
     let (mut fr, mut rf) = (0i64, 0i64); // ori "><" and "<>"
     let mut names: Vec<&str> = Vec::with_capacity(s.len());
+    // Per-source [+, -] counts; BTreeMap keeps sources alphabetical in output.
+    let mut per_source: BTreeMap<&str, [i64; 2]> = BTreeMap::new();
     for m in s {
         mapq_sum += m.mapq;
-        cnt[if m.strand == b'+' { 0 } else { 1 }] += 1;
+        let strand_ix = if m.strand == b'+' { 0 } else { 1 };
+        cnt[strand_ix] += 1;
+        per_source.entry(&m.source).or_default()[strand_ix] += 1;
         if m.ori == *b"><" {
             fr += 1;
         } else if m.ori == *b"<>" {
@@ -147,7 +159,13 @@ fn write_sv(out: &mut impl Write, cl: &Cluster, opts: &MergeOpts) -> io::Result<
     // f64::round is half-away-from-zero, matching JS toFixed(0).
     let avg_mapq = (mapq_sum as f64 / s.len() as f64).round() as i64;
 
-    let mut info = format!("avg_mapq={avg_mapq};count={},{}", cnt[0], cnt[1]);
+    // count=src:f,r|... over sources present in the cluster, alphabetical.
+    let count = per_source
+        .iter()
+        .map(|(src, [f, r])| format!("{src}:{f},{r}"))
+        .collect::<Vec<_>>()
+        .join("|");
+    let mut info = format!("avg_mapq={avg_mapq};count={count}");
     if fr + rf > 0 {
         info.push_str(&format!(";count_fr={fr};count_rf={rf}"));
         if fr * rf == 0 && v.ctg == v.ctg2 {

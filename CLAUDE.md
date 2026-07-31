@@ -96,9 +96,14 @@ ctg1  pos1  ori  ctg2  pos2  .  count  strand  INFO
 
 (`.` in the qname slot, cluster size in the mapq slot; `pos2`=`.` for a clip.)
 `INFO` is merge-derived only (the representative's `idx`/`aln_len`/`qlen`/`mapq`/
-`elen`/`eseq` are **not** carried through): `avg_mapq=M;count=<n+>,<n−>` then, when
-any member is `><`/`<>`, `;count_fr=A;count_rf=B` and `;foldback` if `A*B==0 &&
-ctg1==ctg2`, and finally `;reads=<name,...>`. **Caveat:** the col-8 strand is
+`elen`/`eseq` are **not** carried through): `avg_mapq=M;count=<src:f,r|...>` then,
+when any member is `><`/`<>`, `;count_fr=A;count_rf=B` and `;foldback` if `A*B==0
+&& ctg1==ctg2`, and finally `;reads=<name,...>`. `count=` lists each `source=`
+observed in the cluster (from the reads' `source=` tag) with its forward,reverse
+counts, `|`-joined and **alphabetical** by source; a source is included only if
+present (never `x:0,0`), e.g. `count=foo:2,3|retain:4,5` or single-source
+`count=foo:2,2`. The `-s`/`-c` filters still use cluster-wide strand totals.
+**Caveat:** the col-8 strand is
 `+`/`-` from join canonicalization (read orientation for clips), not strictly
 read strand, so `-s` is an approximate two-sided-support heuristic. Fixtures:
 `test/merge01.clip` (unsorted input), `test/merge01.expected` (default-threshold
