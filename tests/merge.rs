@@ -52,8 +52,8 @@ fn merge_thresholds_relax() {
     ]);
     assert_eq!(got.lines().count(), 4);
     assert!(
-        got.contains("readE1,readE2"),
-        "expected the 2-read E cluster to survive -c 2 -s 1:\n{got}"
+        got.contains("reads=bar:readE2|foo:readE1"),
+        "expected the 2-read E cluster (source-stratified reads) to survive -c 2 -s 1:\n{got}"
     );
 }
 

@@ -132,20 +132,21 @@ fn write_sv(out: &mut impl Write, cl: &Cluster, opts: &MergeOpts) -> io::Result<
     let mut mapq_sum = 0i64;
     let mut cnt = [0i64, 0i64]; // [+, -] cluster totals (for the filter)
     let (mut fr, mut rf) = (0i64, 0i64); // ori "><" and "<>"
-    let mut names: Vec<&str> = Vec::with_capacity(s.len());
-    // Per-source [+, -] counts; BTreeMap keeps sources alphabetical in output.
+    // Per-source [+, -] counts and read-name lists; BTreeMap keeps sources
+    // alphabetical in output. Read names stay in cluster-member order per source.
     let mut per_source: BTreeMap<&str, [i64; 2]> = BTreeMap::new();
+    let mut reads_by_source: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for m in s {
         mapq_sum += m.mapq;
         let strand_ix = if m.strand == b'+' { 0 } else { 1 };
         cnt[strand_ix] += 1;
         per_source.entry(&m.source).or_default()[strand_ix] += 1;
+        reads_by_source.entry(&m.source).or_default().push(&m.name);
         if m.ori == *b"><" {
             fr += 1;
         } else if m.ori == *b"<>" {
             rf += 1;
         }
-        names.push(&m.name);
     }
 
     // Count filter (minisv's RT relaxation branch is dropped, so unconditional).
@@ -172,7 +173,13 @@ fn write_sv(out: &mut impl Write, cl: &Cluster, opts: &MergeOpts) -> io::Result<
             info.push_str(";foldback");
         }
     }
-    info.push_str(&format!(";reads={}", names.join(",")));
+    // reads=src:name,...|... — same sources/order as count=, names per source.
+    let reads = reads_by_source
+        .iter()
+        .map(|(src, ns)| format!("{src}:{}", ns.join(",")))
+        .collect::<Vec<_>>()
+        .join("|");
+    info.push_str(&format!(";reads={reads}"));
 
     let pos2 = v.pos2.map_or_else(|| ".".to_string(), |p| p.to_string());
     let ori = std::str::from_utf8(&v.ori).unwrap_or(".");

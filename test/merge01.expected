@@ -1,3 +1,3 @@
-chr1	1008	>>	chr1	4995	.	4	-	avg_mapq=53;count=bar:1,1|foo:1,1;reads=readA1,readA2,readA4,readA3
-chr1	1004	<.	.	.	.	4	+	avg_mapq=40;count=foo:2,2;reads=readC1,readC2,readC3,readC4
-chr1	2008	><	chr1	2810	.	4	-	avg_mapq=53;count=bar:0,1|foo:2,1;count_fr=3;count_rf=1;reads=readD1,readD3,readD4,readD2
+chr1	1008	>>	chr1	4995	.	4	-	avg_mapq=53;count=bar:1,1|foo:1,1;reads=bar:readA2,readA3|foo:readA1,readA4
+chr1	1004	<.	.	.	.	4	+	avg_mapq=40;count=foo:2,2;reads=foo:readC1,readC2,readC3,readC4
+chr1	2008	><	chr1	2810	.	4	-	avg_mapq=53;count=bar:0,1|foo:2,1;count_fr=3;count_rf=1;reads=bar:readD2|foo:readD1,readD3,readD4

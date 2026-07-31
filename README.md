@@ -257,7 +257,10 @@ ctg1   pos1   ori   ctg2   pos2   .   count   strand   avg_mapq=..;count=..[;cou
   cluster has at least one such read. `foldback` is added when only one of the
   two orientations is present (`count_fr` or `count_rf` is `0`) and both
   endpoints are on the same contig.
-- `reads=name,…` — the supporting read names.
+- `reads=src:name,…|…` — the supporting read names, stratified by `source=` the
+  same way as `count=`: `|`-joined and alphabetical by source (names in
+  member order within each source), e.g. `reads=foo:r1,r2|retain:r3,r4`. Lists the
+  same sources, in the same order, as `count=`.
 
 ```sh
 badclip extract aln.bam | badclip merge - > sv.txt
