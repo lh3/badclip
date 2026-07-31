@@ -28,8 +28,9 @@ cargo run -- extract --paf test/join02.paf   # PAF
 - `src/extract.rs`— dispatch (BAM vs `--paf`), grouping, sorting, clip/join emission; shared `emit_read`/`passes_filter`.
 - `src/geteseq.rs`— `geteseq` subcommand: `extract` output → FASTA of `eseq` records.
 - `src/flteseq.rs`— `flteseq` subcommand: filter breakends by pangenome eseq alignment.
-- `tests/extract.rs` — end-to-end tests driving the compiled binary.
-- `test/`         — `*.paf` inputs, `*.msv` (minisv) references, `bam01*`/`flt01*` fixtures/goldens, `minisv.js`.
+- `src/merge.rs`  — `merge` subcommand: cluster per-read breakends into consensus SV calls.
+- `tests/extract.rs`, `tests/merge.rs` — end-to-end tests driving the compiled binary.
+- `test/`         — `*.paf` inputs, `*.msv` (minisv) references, `bam01*`/`flt01*`/`merge01*` fixtures/goldens, `minisv.js`.
 
 ## `geteseq`
 
@@ -51,6 +52,51 @@ order as the `eseq` lines (a subset), so both files stream with a one-line PAF
 lookahead — no in-memory load. Either input may be `-` (stdin); missing input →
 help (via `main.rs::print_subcommand_help`, shared with `extract`/`geteseq`).
 Fixtures: `test/flt01.clip`, `test/flt01.rb3.paf`.
+
+## `merge`
+
+Collapses per-read `extract` breakends into consensus SV calls — a simplified
+`gc_cmd_merge` from `minisv.js`. badclip has only the breakend type (no
+`SVTYPE`/`SVLEN`), no per-sample `source`, and no centromere/RT annotation, so
+minisv's SVTYPE/SVLEN checks, the `-d` filter, the centromere filter (`-e`), and
+the RT branch (`-r`/`-R`) are all dropped. Unlike minisv (which needs an upstream
+`sort -k1,1 -k2,2n`), `merge` **loads all records into memory and sorts them
+itself** by `(ctg, pos)` — Rust `str` order == `LC_ALL=C sort`; the sort is
+stable so the representative pick is deterministic. Input `-`=stdin, gzip
+auto-detected; no input → help.
+
+Algorithm (`src/merge.rs`): sweep a window of active clusters. Each record joins
+the active cluster whose members it most often matches (`same_sv`), else starts a
+new one; a cluster is flushed (and emitted if it passes the filters) once the
+sweep moves past its `pos_max + -w`. `same_sv` requires: same `ctg`; compatible
+`ori` (equal, or the inversion pair `><`↔`<>`); `|pos−pos| ≤ -w`; same `ctg2`;
+and `|pos2−pos2| ≤ -w` **skipped when either `pos2` is absent** (a clip's `.`
+mate — reproduces minisv's `NaN` comparison, so clips cluster on `ctg2`/`pos`
+alone). Per-cluster comparisons are capped at `-C` members (a deterministic cap
+replacing minisv's reservoir sampling — deep-cluster counts are capped, not
+scaled), and the active-cluster list is bounded by `-A`.
+
+Flags mirror minisv's kept subset: `-c` min read count (4), `-s` min count on
+each strand (2), `-w` window bp (100), `-A` max active clusters (100), `-C` max
+reads compared per cluster (500).
+
+A cluster is emitted only if `count ≥ -c` and each strand has `≥ -s` reads. The
+representative (`members[len/2]`) supplies the coordinate/`ori`/`strand` fields.
+Output is 9 TAB columns, `extract`-shaped:
+
+```
+ctg1  pos1  ori  ctg2  pos2  .  count  strand  INFO
+```
+
+(`.` in the qname slot, cluster size in the mapq slot; `pos2`=`.` for a clip.)
+`INFO` is merge-derived only (the representative's `idx`/`aln_len`/`qlen`/`mapq`/
+`elen`/`eseq` are **not** carried through): `avg_mapq=M;count=<n+>,<n−>` then, when
+any member is `><`/`<>`, `;count_fr=A;count_rf=B` and `;foldback` if `A*B==0 &&
+ctg1==ctg2`, and finally `;reads=<name,...>`. **Caveat:** the col-8 strand is
+`+`/`-` from join canonicalization (read orientation for clips), not strictly
+read strand, so `-s` is an approximate two-sided-support heuristic. Fixtures:
+`test/merge01.clip` (unsorted input), `test/merge01.expected` (default-threshold
+golden).
 
 ## Interval / offset notation
 

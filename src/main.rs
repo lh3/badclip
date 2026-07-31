@@ -6,6 +6,7 @@ mod extract;
 mod flteseq;
 mod geteseq;
 mod io;
+mod merge;
 mod paf;
 
 use std::process::ExitCode;
@@ -13,6 +14,7 @@ use std::process::ExitCode;
 use clap::{CommandFactory, Parser, Subcommand};
 
 use extract::ExtractOpts;
+use merge::MergeOpts;
 
 #[derive(Parser)]
 #[command(name = "badclip", version, about, long_about = None)]
@@ -71,6 +73,32 @@ enum Command {
         /// ropebwt3 `sw` PAF on the `geteseq` FASTA (gzip ok).
         rb3_paf: Option<String>,
     },
+
+    /// Merge per-read `extract` breakends into consensus SV calls.
+    Merge {
+        /// `extract` output (gzip ok; "-" for stdin).
+        input: Option<String>,
+
+        /// Minimum read count to emit a call.
+        #[arg(short = 'c', long = "min-cnt", default_value_t = 4)]
+        min_cnt: i64,
+
+        /// Minimum read count on each strand.
+        #[arg(short = 's', long = "min-cnt-strand", default_value_t = 2)]
+        min_cnt_strand: i64,
+
+        /// Clustering window size (bp).
+        #[arg(short = 'w', long = "win-size", default_value_t = 100)]
+        win_size: i64,
+
+        /// Cap on active clusters (flush trigger).
+        #[arg(short = 'A', long = "max-allele", default_value_t = 100)]
+        max_allele: i64,
+
+        /// Maximum reads compared per cluster (deterministic cap).
+        #[arg(short = 'C', long = "max-check", default_value_t = 500)]
+        max_check: i64,
+    },
 }
 
 /// Print a subcommand's help (as for `-h`) and return exit code 2. Used when a
@@ -128,6 +156,26 @@ fn main() -> ExitCode {
                 return print_subcommand_help("flteseq");
             };
             flteseq::run(&extract_out, &rb3_paf, margin)
+        }
+        Command::Merge {
+            input,
+            min_cnt,
+            min_cnt_strand,
+            win_size,
+            max_allele,
+            max_check,
+        } => {
+            let Some(input) = input else {
+                return print_subcommand_help("merge");
+            };
+            merge::run(&MergeOpts {
+                input,
+                min_cnt,
+                min_cnt_strand,
+                win_size,
+                max_allele,
+                max_check,
+            })
         }
     };
 
