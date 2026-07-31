@@ -1,0 +1,5 @@
+chrA	1	>.	.	.	readA	60	+	idx=0;aln_len=100,0;qlen=100,0,60;mapq=60,0;elen=100,0,60
+chrB	2	>>	chrC	3	readB	60	+	idx=0;aln_len=1,1;qlen=1,0,1;mapq=60,60;elen=250,0,250;eseq=AAAA
+chrD	4	<<	chrE	5	readC	60	-	idx=0;aln_len=1,1;qlen=1,0,1;mapq=60,60;elen=250,0,250;eseq=CCCC
+chrF	6	>.	.	.	readD	60	+	idx=0;aln_len=1,0;qlen=1,0,1;mapq=60,0;elen=250,0,250;eseq=GGGG
+chrG	7	>>	chrH	8	readE	60	+	idx=0;aln_len=1,1;qlen=1,0,1;mapq=60,60;elen=250,0,250;eseq=TTTT

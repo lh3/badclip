@@ -3,6 +3,7 @@
 
 mod bam;
 mod extract;
+mod flteseq;
 mod geteseq;
 mod io;
 mod paf;
@@ -57,6 +58,32 @@ enum Command {
         /// Input `extract` output. Omit or use "-" to read from stdin.
         input: Option<String>,
     },
+
+    /// Filter `extract` breakends whose eseq is spanned by a pangenome alignment.
+    Flteseq {
+        /// Margin extending the protected junction interval on each side.
+        #[arg(short = 'l', long = "margin", default_value_t = 50)]
+        margin: i64,
+
+        /// `extract` output (gzip ok; "-" for stdin).
+        extract_out: Option<String>,
+
+        /// ropebwt3 `sw` PAF on the `geteseq` FASTA (gzip ok).
+        rb3_paf: Option<String>,
+    },
+}
+
+/// Print a subcommand's help (as for `-h`) and return exit code 2. Used when a
+/// subcommand is invoked with no input, so it shows usage instead of blocking on
+/// stdin or erroring.
+fn print_subcommand_help(name: &str) -> ExitCode {
+    let mut cmd = Cli::command();
+    // Build the tree so the subcommand knows its bin name for the usage line.
+    cmd.build();
+    if let Some(sub) = cmd.find_subcommand_mut(name) {
+        let _ = sub.print_help();
+    }
+    ExitCode::from(2)
 }
 
 fn main() -> ExitCode {
@@ -74,14 +101,7 @@ fn main() -> ExitCode {
             // With no input file, show the subcommand help rather than blocking
             // on stdin. Only an explicit "-" reads from stdin.
             let Some(input) = input else {
-                let mut cmd = Cli::command();
-                // Build the tree so subcommands know their bin name ("badclip
-                // extract") for the rendered usage line.
-                cmd.build();
-                if let Some(sub) = cmd.find_subcommand_mut("extract") {
-                    let _ = sub.print_help();
-                }
-                return ExitCode::from(2);
+                return print_subcommand_help("extract");
             };
             extract::run(&ExtractOpts {
                 input,
@@ -93,7 +113,22 @@ fn main() -> ExitCode {
                 max_eseq,
             })
         }
-        Command::Geteseq { input } => geteseq::run(input.as_deref()),
+        Command::Geteseq { input } => {
+            let Some(input) = input else {
+                return print_subcommand_help("geteseq");
+            };
+            geteseq::run(&input)
+        }
+        Command::Flteseq {
+            margin,
+            extract_out,
+            rb3_paf,
+        } => {
+            let (Some(extract_out), Some(rb3_paf)) = (extract_out, rb3_paf) else {
+                return print_subcommand_help("flteseq");
+            };
+            flteseq::run(&extract_out, &rb3_paf, margin)
+        }
     };
 
     if let Err(e) = result {

@@ -122,9 +122,12 @@ each record that has an `eseq` tag, it writes one FASTA entry named
 `eseq` bases; records without `eseq` are skipped.
 
 ```sh
-badclip extract aln.bam | badclip geteseq > eseq.fa
-badclip geteseq extract.txt            # or a file ("-" / omitted = stdin)
+badclip extract aln.bam | badclip geteseq - > eseq.fa   # "-" = stdin
+badclip geteseq extract.txt                             # or a file
 ```
+
+Running `geteseq` (or `flteseq`) with no input prints its help instead of
+waiting on stdin; use `-` to read stdin.
 
 Example:
 
@@ -133,8 +136,35 @@ Example:
 ACTTTGGGAGGCCAAGGCAGGCGGATCACCTG...
 ```
 
+## `flteseq`
+
+Keep only breakends whose junction sequence is **not** already explained by a
+pangenome. Align the `geteseq` FASTA against a pangenome index (e.g.
+`ropebwt3 sw`) to get a PAF, then:
+
+```sh
+badclip flteseq [-l 50] <extractOut> <ropebwt3.paf>
+```
+
+A record is **dropped** if it has no `eseq` tag, or if some ropebwt3 alignment's
+query interval `[qs,qe]` on the eseq contains the junction interval
+`[max(0, elen0-l), min(elen0+|elen1|+l, |eseq|)]` (i.e. the alignment spans the
+breakend, with `-l` margin on each side — the breakend is "protected"). Surviving
+`extract` lines are printed verbatim.
+
+Both inputs may be gzip'd. The PAF's query names must be the `geteseq` names, and
+in the same order as the `eseq` records (as produced by the pipeline), so the two
+files are streamed without loading into memory.
+
+```sh
+badclip extract aln.bam > clip.txt
+badclip geteseq clip.txt | ropebwt3 sw -d pangenome.fmd - > rb3.paf
+badclip flteseq clip.txt rb3.paf > novel.txt
+```
+
 ## Status
 
 BAM (default) and PAF (`--paf`) input are implemented and share the same
-breakend logic; `geteseq` turns extract output into FASTA. See `CLAUDE.md` for
-internals and the interval/offset convention.
+breakend logic; `geteseq` turns extract output into FASTA, and `flteseq` filters
+breakends against a pangenome. See `CLAUDE.md` for internals and the
+interval/offset convention.

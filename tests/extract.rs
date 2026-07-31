@@ -163,21 +163,28 @@ fn stdin_matches_file() {
     );
 }
 
-#[test]
-fn no_input_shows_help() {
-    // `badclip extract` with no file must print help and exit 2, not block on
-    // stdin. stdin is /dev/null so a regression would EOF rather than hang.
+/// Run `badclip <args>` with stdin=/dev/null; assert it exits 2 and prints the
+/// subcommand's usage (rather than blocking on stdin or erroring).
+fn assert_shows_help(args: &[&str], usage: &str) {
     let output = Command::new(env!("CARGO_BIN_EXE_badclip"))
-        .arg("extract")
+        .args(args)
         .stdin(Stdio::null())
         .output()
         .expect("failed to run badclip");
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(2), "args={args:?}");
     let help = String::from_utf8(output.stdout).unwrap();
-    assert!(
-        help.contains("Usage: badclip extract"),
-        "expected help output, got: {help}"
-    );
+    assert!(help.contains(usage), "expected {usage:?}, got: {help}");
+}
+
+#[test]
+fn no_input_shows_help() {
+    // Each subcommand with no file must print help and exit 2, not block on
+    // stdin. stdin is /dev/null so a regression would EOF rather than hang.
+    assert_shows_help(&["extract"], "Usage: badclip extract");
+    assert_shows_help(&["geteseq"], "Usage: badclip geteseq");
+    assert_shows_help(&["flteseq"], "Usage: badclip flteseq");
+    // flteseq needs two inputs; one is still "no input" -> help, not an error.
+    assert_shows_help(&["flteseq", "some.clip"], "Usage: badclip flteseq");
 }
 
 #[test]
@@ -349,5 +356,27 @@ fn geteseq_matches_golden() {
         .expect("failed to run badclip geteseq");
     assert!(out.status.success());
     let expected = std::fs::read_to_string(test_dir().join("bam01.fa")).unwrap();
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), expected);
+}
+
+// --- flteseq ---
+
+#[test]
+fn flteseq_filters() {
+    // flt01: elen=250,0,250 -> protected interval [200,300] with -l 50.
+    // readA: no eseq -> dropped. readB: aln [0,500] contains [200,300] -> dropped.
+    // readC: aln [250,500] does not contain -> kept. readD: no PAF line -> kept.
+    // readE: two alns, one ([0,400]) contains -> dropped.
+    let out = Command::new(env!("CARGO_BIN_EXE_badclip"))
+        .arg("flteseq")
+        .arg(test_dir().join("flt01.clip"))
+        .arg(test_dir().join("flt01.rb3.paf"))
+        .output()
+        .expect("failed to run badclip flteseq");
+    assert!(out.status.success());
+    let expected = "\
+chrD\t4\t<<\tchrE\t5\treadC\t60\t-\tidx=0;aln_len=1,1;qlen=1,0,1;mapq=60,60;elen=250,0,250;eseq=CCCC
+chrF\t6\t>.\t.\t.\treadD\t60\t+\tidx=0;aln_len=1,0;qlen=1,0,1;mapq=60,0;elen=250,0,250;eseq=GGGG
+";
     assert_eq!(String::from_utf8(out.stdout).unwrap(), expected);
 }

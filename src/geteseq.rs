@@ -10,9 +10,9 @@ use std::io::{self, BufRead, Write};
 
 use crate::io::open_reader;
 
-/// Read `extract` output from `input` (`None` or `"-"` = stdin) and emit FASTA.
-pub fn run(input: Option<&str>) -> io::Result<()> {
-    let reader = open_reader(input.unwrap_or("-"))?;
+/// Read `extract` output from `input` (`"-"` = stdin) and emit FASTA.
+pub fn run(input: &str) -> io::Result<()> {
+    let reader = open_reader(input)?;
     let stdout = io::stdout();
     let mut out = io::BufWriter::new(stdout.lock());
     for line in reader.lines() {

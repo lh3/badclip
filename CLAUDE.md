@@ -27,15 +27,30 @@ cargo run -- extract --paf test/join02.paf   # PAF
 - `src/bam.rs`    — BAM input via noodles: build `Hit`s from a primary record + its `SA` tag.
 - `src/extract.rs`— dispatch (BAM vs `--paf`), grouping, sorting, clip/join emission; shared `emit_read`/`passes_filter`.
 - `src/geteseq.rs`— `geteseq` subcommand: `extract` output → FASTA of `eseq` records.
+- `src/flteseq.rs`— `flteseq` subcommand: filter breakends by pangenome eseq alignment.
 - `tests/extract.rs` — end-to-end tests driving the compiled binary.
-- `test/`         — `*.paf` inputs, `*.msv` (minisv) references, `bam01*` fixtures/goldens, `minisv.js`.
+- `test/`         — `*.paf` inputs, `*.msv` (minisv) references, `bam01*`/`flt01*` fixtures/goldens, `minisv.js`.
 
 ## `geteseq`
 
-Filters `extract` output (TAB-delimited; `-`/omitted = stdin, gzip auto-detected)
-to FASTA. For each record with an `eseq` tag it emits `>readName_idx_L_R` (from
+Filters `extract` output (TAB-delimited; `-` = stdin, gzip auto-detected; no
+input → print help) to FASTA. For each record with an `eseq` tag it emits
+`>readName_idx_L_R` (from
 the `idx` tag and `elen`'s `leftFlank`/`rightFlank`) followed by the `eseq` bases;
 records lacking `eseq` are skipped. Golden: `test/bam01.fa`.
+
+## `flteseq`
+
+Filters `extract` output against a ropebwt3 `sw` PAF (both gzip-ok) of the
+`geteseq` FASTA aligned to a pangenome. Drops a line if it has no `eseq`, or if
+some PAF alignment's query interval `[qs,qe]` (cols 3,4) contains the junction
+interval `[max(0,e0-l), min(e0+|e1|+l, e0+|e1|+e2)]` on the eseq (`elen=e0,e1,e2`,
+`-l` margin, default 50) — the breakend is "protected"/not novel. Survivors are
+printed verbatim. The PAF qname is `geteseq`'s name and its lines are in the same
+order as the `eseq` lines (a subset), so both files stream with a one-line PAF
+lookahead — no in-memory load. Either input may be `-` (stdin); missing input →
+help (via `main.rs::print_subcommand_help`, shared with `extract`/`geteseq`).
+Fixtures: `test/flt01.clip`, `test/flt01.rb3.paf`.
 
 ## Interval / offset notation
 
