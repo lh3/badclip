@@ -231,6 +231,59 @@ fn source_tag_custom() {
     assert!(run_extract_file("join01").contains("source=foo;"));
 }
 
+// --- CRAM input ---
+
+// cram01.{bam,cram} are the SAME two synthetic reads (a right-soft-clip and a
+// two-hit chimera) over the synthetic reference test/cram01.fa. CRAM stores the
+// sequence as diffs against the reference, so `extract` must decode it via -r.
+
+#[test]
+fn cram_matches_bam() {
+    // The autodetected CRAM path (with -r) must reproduce the BAM output exactly,
+    // including the reference-reconstructed eseq bases.
+    let bam = Command::new(env!("CARGO_BIN_EXE_badclip"))
+        .arg("extract")
+        .arg(test_dir().join("cram01.bam"))
+        .output()
+        .expect("failed to run badclip on BAM");
+    assert!(bam.status.success());
+
+    let cram = Command::new(env!("CARGO_BIN_EXE_badclip"))
+        .arg("extract")
+        .arg(test_dir().join("cram01.cram"))
+        .arg("-r")
+        .arg(test_dir().join("cram01.fa"))
+        .output()
+        .expect("failed to run badclip on CRAM");
+    assert!(
+        cram.status.success(),
+        "badclip failed on CRAM: {}",
+        String::from_utf8_lossy(&cram.stderr)
+    );
+
+    assert_eq!(
+        String::from_utf8(cram.stdout).unwrap(),
+        String::from_utf8(bam.stdout).unwrap()
+    );
+}
+
+#[test]
+fn cram_requires_reference() {
+    // CRAM without -r must fail with a message naming the reference / -r, not
+    // emit a cryptic decode error.
+    let out = Command::new(env!("CARGO_BIN_EXE_badclip"))
+        .arg("extract")
+        .arg(test_dir().join("cram01.cram"))
+        .output()
+        .expect("failed to run badclip");
+    assert!(!out.status.success(), "CRAM without -r should fail");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("-r") && stderr.to_lowercase().contains("reference"),
+        "expected a reference/-r error, got: {stderr}"
+    );
+}
+
 // --- BAM input ---
 
 // bam01.bam holds three reads: a 3-hit chimera (.../234884627/ccs -> 1 left clip

@@ -12,9 +12,10 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 flate2 = "1"
-noodles-bam = "0.92"
 noodles-sam = "0.87"
 noodles-core = "0.20"
+noodles-fasta = "0.64"
+noodles-util = { version = "0.82", features = ["alignment"] }
 
 [dev-dependencies]
 flate2 = "1"

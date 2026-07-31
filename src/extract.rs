@@ -32,8 +32,10 @@ use crate::paf::{Hit, Strand, parse_paf_line};
 pub struct ExtractOpts {
     /// Input path; `"-"` means stdin.
     pub input: String,
-    /// Read PAF instead of BAM.
+    /// Read PAF instead of an alignment file (BAM/CRAM/SAM).
     pub paf: bool,
+    /// Reference FASTA (faidx-indexed), required for CRAM input.
+    pub reference: Option<String>,
     /// Dataset name, emitted as the `source=` INFO tag on every record.
     pub source: String,
     /// Minimum clip length to report a clip breakend.
@@ -126,7 +128,7 @@ pub fn run(opts: &ExtractOpts) -> io::Result<()> {
         let reader = open_reader(&opts.input)?;
         run_paf(reader, opts, &mut out)
     } else {
-        crate::bam::run_bam(&opts.input, opts, &mut out)
+        crate::aln::run(&opts.input, opts, &mut out)
     }
 }
 

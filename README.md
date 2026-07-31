@@ -39,42 +39,50 @@ Find breakends (clips and joins) in read-to-reference alignments.
 badclip extract [OPTIONS] [INPUT]
 ```
 
-- `INPUT` — alignments in **BAM** by default, or **PAF** with `--paf`. Pass `-`
-  to read from stdin. PAF input may be gzip'd (auto-detected).
+- `INPUT` — an **alignment file** (SAM/BAM/CRAM, format auto-detected) by
+  default, or **PAF** with `--paf`. Pass `-` to read from stdin (autodetection
+  works on a pipe too). PAF input may be gzip'd (auto-detected). **CRAM requires a
+  reference** via `-r`.
 
 Options:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--paf` | off | Read PAF (optionally gzip'd) instead of BAM. |
+| `--paf` | off | Read PAF (optionally gzip'd) instead of an alignment file. |
+| `-r`, `--reference <FASTA>` | — | Reference FASTA (faidx-indexed), **required for CRAM**; ignored for BAM/SAM/PAF. |
 | `-s`, `--source <STR>` | `foo` | Dataset name, stamped on every record as a `source=` INFO tag. |
 | `-c`, `--min-clip <INT>` | `50` | Minimum clip length to report a clip breakend. |
 | `-q`, `--min-mapq <INT>` | `0` | Drop hits with mapping quality below this value. |
 | `-a`, `--min-aln-len <INT>` | `0` | Drop hits whose alignment block length (PAF col 11) is below this value. |
-| `-f`, `--flank <INT>` | `250` | Flanking read sequence extracted on each side of a breakend (BAM only). |
-| `-e`, `--max-eseq <INT>` | `1000` | Maximum extracted window; longer windows omit `eseq` (BAM only). |
+| `-f`, `--flank <INT>` | `250` | Flanking read sequence extracted on each side of a breakend (alignment-file input only). |
+| `-e`, `--max-eseq <INT>` | `1000` | Maximum extracted window; longer windows omit `eseq` (alignment-file input only). |
 
 Examples:
 
 ```sh
-badclip extract aln.bam                   # BAM (default), sorted or unsorted
-samtools view -b … | badclip extract -    # BAM from stdin
-badclip extract --paf aln.paf.gz          # PAF (gzip auto-detected)
-minimap2 … | badclip extract --paf -      # PAF from stdin
+badclip extract aln.bam                     # BAM (default), sorted or unsorted
+badclip extract aln.cram -r ref.fa          # CRAM (needs faidx-indexed reference)
+samtools view -b … | badclip extract -      # BAM/CRAM from stdin (autodetected)
+badclip extract --paf aln.paf.gz            # PAF (gzip auto-detected)
+minimap2 … | badclip extract --paf -        # PAF from stdin
 ```
 
 ### Input assumptions
 
-- **BAM**: a read's chimeric hits are read from the primary alignment's `SA:Z:`
-  tag; secondary/supplementary/unmapped records are ignored. Works on both
-  coordinate-sorted and name-grouped BAM (no grouping required).
+- **Alignment file (SAM/BAM/CRAM)**: the container format is auto-detected. A
+  read's chimeric hits are read from the primary alignment's `SA:Z:` tag;
+  secondary/supplementary/unmapped records are ignored. Works on both
+  coordinate-sorted and name-grouped files (no grouping required). **CRAM** needs
+  `-r ref.fa` (with `ref.fa.fai`) to decode read sequences; `-r` is ignored for
+  BAM/SAM.
 - **PAF**: alignments are grouped by read name (as produced directly by
   minimap2); primary/supplementary (`tp:A:P`) and inversion (`tp:A:I`)
   alignments are used, secondary (`tp:A:S`) are ignored.
 - Within a read, hits are sorted by their start position along the read.
 
-BAM and PAF produce the same output for the same alignments, with one caveat:
-`aln_len` for supplementary hits is a few bp smaller from BAM because minimap2's
+An alignment file and PAF produce the same output for the same alignments, with
+one caveat: `aln_len` for supplementary hits is a few bp smaller from BAM/CRAM
+because minimap2's
 `SA` CIGAR is collapsed (the primary hit's `aln_len` matches).
 
 ### Output
@@ -104,7 +112,8 @@ key). It is written as `source`, then `idx`, then three tags in output order
 - `mapq=mapq1,mapq2` — mapq of each hit; for a clip `mapq2 = 0`. (The `mapq`
   *column* above is the smaller of a join's two mapqs; this tag keeps both.)
 
-The last two tags are **BAM only** (PAF has no read sequence), in read-forward
+The last two tags come from **alignment-file input only** (PAF has no read
+sequence; for CRAM the sequence is reconstructed against `-r`), in read-forward
 orientation (not flipped with the output):
 
 - `elen=leftFlank,qdist,rightFlank` — sizes of the extracted window: up to `-f`
@@ -251,7 +260,7 @@ badclip extract aln.bam | badclip merge - > sv.txt
 
 ## Status
 
-All four subcommands are implemented: `extract` (BAM default, or PAF via
-`--paf`) finds breakends; `geteseq` turns its output into FASTA; `flteseq`
+All four subcommands are implemented: `extract` (SAM/BAM/CRAM auto-detected, or
+PAF via `--paf`) finds breakends; `geteseq` turns its output into FASTA; `flteseq`
 filters breakends against a pangenome; and `merge` clusters them into consensus
 SV calls. See `CLAUDE.md` for internals and the interval/offset convention.

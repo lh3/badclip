@@ -1,7 +1,7 @@
 //! badclip — extract breakends and structural-variant signals from long-read
 //! alignments.
 
-mod bam;
+mod aln;
 mod extract;
 mod flteseq;
 mod geteseq;
@@ -33,6 +33,10 @@ enum Command {
         /// Read PAF (optionally gzip'd) instead of BAM.
         #[arg(long)]
         paf: bool,
+
+        /// Reference FASTA (faidx-indexed), required for CRAM input.
+        #[arg(short = 'r', long = "reference")]
+        reference: Option<String>,
 
         /// Dataset name, emitted as a `source=` INFO tag on every record.
         #[arg(short = 's', long = "source", default_value_t = String::from("foo"))]
@@ -128,6 +132,7 @@ fn main() -> ExitCode {
         Command::Extract {
             input,
             paf,
+            reference,
             source,
             min_clip,
             min_mapq,
@@ -143,6 +148,7 @@ fn main() -> ExitCode {
             extract::run(&ExtractOpts {
                 input,
                 paf,
+                reference,
                 source,
                 min_clip,
                 min_mapq,

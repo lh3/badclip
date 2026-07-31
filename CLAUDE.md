@@ -24,13 +24,13 @@ cargo run -- extract --paf test/join02.paf   # PAF
 - `src/main.rs`   — clap CLI, subcommand dispatch. New subcommands slot in here.
 - `src/io.rs`     — `open_reader`: stdin/file + transparent gzip (magic-byte peek); PAF only.
 - `src/paf.rs`    — `Hit` struct, `Strand`, `parse_paf_line` (keeps only `tp:A:P`).
-- `src/bam.rs`    — BAM input via noodles: build `Hit`s from a primary record + its `SA` tag.
-- `src/extract.rs`— dispatch (BAM vs `--paf`), grouping, sorting, clip/join emission; shared `emit_read`/`passes_filter`.
+- `src/aln.rs`    — SAM/BAM/CRAM input via noodles-util (format autodetected): build `Hit`s from a primary record + its `SA` tag. CRAM needs `-r`.
+- `src/extract.rs`— dispatch (alignment file vs `--paf`), grouping, sorting, clip/join emission; shared `emit_read`/`passes_filter`.
 - `src/geteseq.rs`— `geteseq` subcommand: `extract` output → FASTA of `eseq` records.
 - `src/flteseq.rs`— `flteseq` subcommand: filter breakends by pangenome eseq alignment.
 - `src/merge.rs`  — `merge` subcommand: cluster per-read breakends into consensus SV calls.
 - `tests/extract.rs`, `tests/merge.rs` — end-to-end tests driving the compiled binary.
-- `test/`         — `*.paf` inputs, `*.msv` (minisv) references, `bam01*`/`flt01*`/`merge01*` fixtures/goldens, `minisv.js`.
+- `test/`         — `*.paf` inputs, `*.msv` (minisv) references, `bam01*`/`cram01*`/`flt01*`/`merge01*` fixtures/goldens, `minisv.js`.
 
 ## `geteseq`
 
@@ -119,46 +119,58 @@ interval `|qs,qe|` on a strand. Emitted positions are raw 0-based offsets — no
 
 ## `extract` — behaviour
 
-Input is **BAM by default**, or **PAF with `--paf`**. `-` reads stdin (no input
-at all → print help, don't block on stdin). Both paths build a `Vec<Hit>` per
-read and feed the shared `emit_read`.
+Input is an **alignment file by default** (SAM/BAM/CRAM, autodetected), or **PAF
+with `--paf`**. `-` reads stdin (no input at all → print help, don't block on
+stdin). Both paths build a `Vec<Hit>` per read and feed the shared `emit_read`.
 
 - **PAF** (`src/extract.rs::run_paf`): assumed grouped by read name; streamed and
   buffered per read, keeping `tp:A:P` (primary/supplementary) and `tp:A:I`
   (inversion), dropping `tp:A:S`. One hit per line.
-- **BAM** (`src/bam.rs::run_bam`): iterate primary records only (skip
-  secondary/supplementary/unmapped). Each read's hits = the primary (from its
-  own CIGAR) + one per `SA:Z:` entry. No grouping needed, so sorted and
-  name-grouped BAM both work. Coordinates are computed to match PAF exactly
+- **Alignment file** (`src/aln.rs::run`): the container (SAM/BAM/CRAM) is
+  autodetected by `noodles_util::alignment::io::reader` (magic-byte sniff, works
+  on stdin too); records come as `Box<dyn sam::alignment::Record>` and are
+  processed by the trait (one path for all three). Iterate primary records only
+  (skip secondary/supplementary/unmapped). Each read's hits = the primary (from
+  its own CIGAR) + one per `SA:Z:` entry. No grouping needed, so sorted and
+  name-grouped files both work. Coordinates are computed to match PAF exactly
   (`span_from_ops`): `qspan/refspan/alen` from the CIGAR, `lead/tail` clips,
   `qlen=lead+qspan+tail`, `qs = +?lead:tail`, `qe=qs+qspan`, `ts=pos0`,
-  `te=pos0+refspan`. noodles crates: bam 0.92 / sam 0.87 / core 0.20.
+  `te=pos0+refspan`.
+  - **CRAM** needs a reference: `-r` (a faidx-indexed FASTA, i.e. `ref.fa` +
+    `ref.fa.fai`) builds a `fasta::Repository` the reader decodes sequences
+    against. A 4-byte `CRAM` magic peek gates this: CRAM without `-r` errors; `-r`
+    is ignored (repository not built) for BAM/SAM. `eseq` for CRAM is the
+    reference-reconstructed `SEQ`, identical to the BAM output for the same reads.
+  - noodles crates: util 0.82 (feature `alignment`) / sam 0.87 / core 0.20 /
+    cram 0.96 / fasta 0.64.
 
 Within a read, hits are sorted by query start `qs`. Filtering is off by default:
 `-q` drops hits below a mapq (default 0) and `-a` drops hits whose alignment
 block length (PAF col 11, the `alen` field) is below a threshold (default 0).
 The clip threshold is `-c` (default 50). `-s` sets the `source=` dataset label
-(default `foo`), stamped on every record (BAM and PAF).
+(default `foo`), stamped on every record (alignment file and PAF).
 
-**eseq/elen (BAM only).** With the read sequence available, each breakend also
-gets a window around the junction: read-forward `[max(lo-f,0), min(hi+f,qlen)]`
-where `lo=min(y0.qe,y1.qs)`, `hi=max(..)` for a join (`lo=hi=p`, the clip point
-`first.qs`/`last.qe`, for a clip). `-f` (default 250) is the flank, `-e` (default
-1000) the max window. `elen=leftFlank,qdist,rightFlank` is always emitted (BAM);
-`eseq=<bases>` is appended only when the window `<= -e`. Both are read-forward
-(NOT flipped with the output, unlike `qlen`). `eseq` is on the original read
-strand: the primary `SEQ` reverse-complemented iff the primary is reverse-mapped
-(`src/bam.rs::revcomp`), usable only when `SEQ.len()==qlen` (soft-clipped
-primary). See `src/extract.rs::eseq_info`.
+**eseq/elen (alignment-file input only, not PAF).** With the read sequence
+available, each breakend also gets a window around the junction: read-forward
+`[max(lo-f,0), min(hi+f,qlen)]` where `lo=min(y0.qe,y1.qs)`, `hi=max(..)` for a
+join (`lo=hi=p`, the clip point `first.qs`/`last.qe`, for a clip). `-f` (default
+250) is the flank, `-e` (default 1000) the max window.
+`elen=leftFlank,qdist,rightFlank` is always emitted; `eseq=<bases>` is appended
+only when the window `<= -e`. Both are read-forward (NOT flipped with the output,
+unlike `qlen`). `eseq` is on the original read strand: the primary `SEQ`
+reverse-complemented iff the primary is reverse-mapped (`src/aln.rs::revcomp`),
+usable only when `SEQ.len()==qlen` (soft-clipped primary). For CRAM the `SEQ` is
+reconstructed against the `-r` reference. See `src/extract.rs::eseq_info`.
 
-### BAM vs PAF parity
+### Alignment file vs PAF parity
 
 For the same alignments the output is identical except `aln_len` of supplementary
-(SA-derived) hits, which is a few bp smaller from BAM because minimap2's `SA`
-CIGAR merges small indels (the primary hit's `aln_len` matches PAF). Everything
-else — line count, offsets, `ori`, `strand`, `qlen`, `mapq`, clip/join logic,
-and inversion (`tp:A:I`) segments — matches exactly. (Verified on the test data:
-both emit 1009 lines; the diff after masking `aln_len` is empty.)
+(SA-derived) hits, which is a few bp smaller from a BAM/CRAM because minimap2's
+`SA` CIGAR merges small indels (the primary hit's `aln_len` matches PAF).
+Everything else — line count, offsets, `ori`, `strand`, `qlen`, `mapq`, clip/join
+logic, and inversion (`tp:A:I`) segments — matches exactly. (Verified on the test
+data: both emit 1009 lines; the diff after masking `aln_len` is empty.) BAM and
+CRAM outputs are byte-identical for the same reads (`tests/extract.rs::cram_matches_bam`).
 
 ### Output (9 columns, TAB-delimited)
 
