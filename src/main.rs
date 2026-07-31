@@ -71,6 +71,10 @@ enum Command {
         #[arg(short = 'l', long = "margin", default_value_t = 50)]
         margin: i64,
 
+        /// Print all input lines, rewriting survivors' `source=` tag to this.
+        #[arg(short = 's', long = "source")]
+        source: Option<String>,
+
         /// `extract` output (gzip ok; "-" for stdin).
         extract_out: Option<String>,
 
@@ -155,13 +159,14 @@ fn main() -> ExitCode {
         }
         Command::Flteseq {
             margin,
+            source,
             extract_out,
             rb3_paf,
         } => {
             let (Some(extract_out), Some(rb3_paf)) = (extract_out, rb3_paf) else {
                 return print_subcommand_help("flteseq");
             };
-            flteseq::run(&extract_out, &rb3_paf, margin)
+            flteseq::run(&extract_out, &rb3_paf, margin, source.as_deref())
         }
         Command::Merge {
             input,

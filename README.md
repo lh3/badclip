@@ -177,12 +177,18 @@ Options:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-l`, `--margin <INT>` | `50` | Margin extending the protected junction interval on each side. |
+| `-s`, `--source <STR>` | off | Print **all** input lines and rewrite the `source=` tag to `STR` on survivors (kept/novel breakends). |
 
 A record is **dropped** if it has no `eseq` tag, or if some ropebwt3 alignment's
 query interval `[qs,qe]` on the eseq contains the junction interval
 `[max(0, elen0-l), min(elen0+|elen1|+l, |eseq|)]` (i.e. the alignment spans the
 breakend, with `-l` margin on each side — the breakend is "protected"). Surviving
 `extract` lines are printed verbatim.
+
+With `-s STR`, the output instead contains **every** input line, with the
+survivors' `source=` tag rewritten to `STR` (dropped lines keep their original
+`source`). This marks novel breakends distinctly so a downstream `merge` can tell
+them from pangenome-explained ones.
 
 The PAF's query names must be the `geteseq` names, and in the same order as the
 `eseq` records (as produced by the pipeline), so the two files are streamed

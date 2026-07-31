@@ -10,13 +10,21 @@
 //! The PAF's query names are `geteseq`'s names (`readName_idx_leftFlank_
 //! rightFlank`) in the same order as the `eseq` lines, and a subset of them, so
 //! both files are streamed with a one-line lookahead over the PAF.
+//!
+//! With `-s STR` (`source: Some`), the mode flips: every input line is printed,
+//! and the survivors (kept/novel breakends) get their `source=` INFO tag
+//! rewritten to `STR`; dropped lines are printed verbatim with their original
+//! source. This tags novel calls distinctly for a downstream `merge`.
 
 use std::io::{self, BufRead, Write};
 
 use crate::io::open_reader;
 
 /// Filter `extract_out` using the ropebwt3 PAF `rb3_paf`; `l` is the margin.
-pub fn run(extract_out: &str, rb3_paf: &str, l: i64) -> io::Result<()> {
+///
+/// With `source = Some(str)`, print all input lines and rewrite the `source=`
+/// tag to `str` on survivors; with `None`, print only survivors, verbatim.
+pub fn run(extract_out: &str, rb3_paf: &str, l: i64, source: Option<&str>) -> io::Result<()> {
     let clip = open_reader(extract_out)?;
     let mut paf = open_reader(rb3_paf)?.lines();
     let stdout = io::stdout();
@@ -28,7 +36,12 @@ pub fn run(extract_out: &str, rb3_paf: &str, l: i64) -> io::Result<()> {
     for line in clip.lines() {
         let line = line?;
         let Some((name, lo, hi)) = protected_interval(&line, l) else {
-            continue; // no eseq tag -> dropped
+            // No eseq tag -> dropped. In print-all mode it is still emitted
+            // verbatim; it has no PAF entry, so the stream stays in sync.
+            if source.is_some() {
+                writeln!(out, "{line}")?;
+            }
+            continue;
         };
 
         // Consume the PAF lines belonging to this eseq (same order, subset), and
@@ -57,11 +70,43 @@ pub fn run(extract_out: &str, rb3_paf: &str, l: i64) -> io::Result<()> {
             }
         }
 
-        if !protected {
-            writeln!(out, "{line}")?;
+        let survivor = !protected;
+        match source {
+            // Print-all mode: survivors get their source relabelled, dropped
+            // (protected) lines are printed verbatim.
+            Some(src) if survivor => writeln!(out, "{}", relabel_source(&line, src))?,
+            Some(_) => writeln!(out, "{line}")?,
+            // Default mode: only survivors, verbatim.
+            None if survivor => writeln!(out, "{line}")?,
+            None => {}
         }
     }
     Ok(())
+}
+
+/// Rewrite the `source=` value in a record's INFO (last TAB field) to `src`.
+/// If no `source=` tag is present, prepend one (extract's "source first"
+/// convention). Only this one tag's value changes; tag order is not significant.
+fn relabel_source(line: &str, src: &str) -> String {
+    let Some((rest, info)) = line.rsplit_once('\t') else {
+        return line.to_string();
+    };
+    let mut found = false;
+    let mut tags: Vec<String> = info
+        .split(';')
+        .map(|kv| {
+            if kv.starts_with("source=") {
+                found = true;
+                format!("source={src}")
+            } else {
+                kv.to_string()
+            }
+        })
+        .collect();
+    if !found {
+        tags.insert(0, format!("source={src}"));
+    }
+    format!("{rest}\t{}", tags.join(";"))
 }
 
 /// For an `extract` line with an `eseq` tag, return `(fastaName, lo, hi)` — the

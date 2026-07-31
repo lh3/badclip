@@ -53,6 +53,12 @@ lookahead — no in-memory load. Either input may be `-` (stdin); missing input 
 help (via `main.rs::print_subcommand_help`, shared with `extract`/`geteseq`).
 Fixtures: `test/flt01.clip`, `test/flt01.rb3.paf`.
 
+`-s STR` flips the mode: print **all** input lines and rewrite the `source=` INFO
+tag to `STR` on the survivors (kept/novel), leaving dropped lines (no `eseq`, or
+pangenome-explained) verbatim — tagging novel calls distinctly for a downstream
+`merge` (`flteseq.rs::relabel_source`). Without `-s`, only survivors are printed
+verbatim.
+
 ## `merge`
 
 Collapses per-read `extract` breakends into consensus SV calls — a simplified

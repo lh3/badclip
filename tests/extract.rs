@@ -390,8 +390,32 @@ fn flteseq_filters() {
         .expect("failed to run badclip flteseq");
     assert!(out.status.success());
     let expected = "\
-chrD\t4\t<<\tchrE\t5\treadC\t60\t-\tidx=0;aln_len=1,1;qlen=1,0,1;mapq=60,60;elen=250,0,250;eseq=CCCC
-chrF\t6\t>.\t.\t.\treadD\t60\t+\tidx=0;aln_len=1,0;qlen=1,0,1;mapq=60,0;elen=250,0,250;eseq=GGGG
+chrD\t4\t<<\tchrE\t5\treadC\t60\t-\tsource=foo;idx=0;aln_len=1,1;qlen=1,0,1;mapq=60,60;elen=250,0,250;eseq=CCCC
+chrF\t6\t>.\t.\t.\treadD\t60\t+\tsource=foo;idx=0;aln_len=1,0;qlen=1,0,1;mapq=60,0;elen=250,0,250;eseq=GGGG
+";
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), expected);
+}
+
+#[test]
+fn flteseq_source_relabel() {
+    // With `-s novel`, all 5 input lines are printed; the survivors (readC, readD)
+    // get their source rewritten to `novel`, and the dropped lines (readA no eseq,
+    // readB and readE pangenome-explained) keep their original `source=foo`.
+    let out = Command::new(env!("CARGO_BIN_EXE_badclip"))
+        .arg("flteseq")
+        .arg("-s")
+        .arg("novel")
+        .arg(test_dir().join("flt01.clip"))
+        .arg(test_dir().join("flt01.rb3.paf"))
+        .output()
+        .expect("failed to run badclip flteseq");
+    assert!(out.status.success());
+    let expected = "\
+chrA\t1\t>.\t.\t.\treadA\t60\t+\tsource=foo;idx=0;aln_len=100,0;qlen=100,0,60;mapq=60,0;elen=100,0,60
+chrB\t2\t>>\tchrC\t3\treadB\t60\t+\tsource=foo;idx=0;aln_len=1,1;qlen=1,0,1;mapq=60,60;elen=250,0,250;eseq=AAAA
+chrD\t4\t<<\tchrE\t5\treadC\t60\t-\tsource=novel;idx=0;aln_len=1,1;qlen=1,0,1;mapq=60,60;elen=250,0,250;eseq=CCCC
+chrF\t6\t>.\t.\t.\treadD\t60\t+\tsource=novel;idx=0;aln_len=1,0;qlen=1,0,1;mapq=60,0;elen=250,0,250;eseq=GGGG
+chrG\t7\t>>\tchrH\t8\treadE\t60\t+\tsource=foo;idx=0;aln_len=1,1;qlen=1,0,1;mapq=60,60;elen=250,0,250;eseq=TTTT
 ";
     assert_eq!(String::from_utf8(out.stdout).unwrap(), expected);
 }
