@@ -151,8 +151,30 @@ fn emit_record(
         None
     };
 
+    // Per-base qualities on the original read strand, for the `equal` tag. Raw
+    // phred values; on the reverse strand they are reversed (NOT complemented) to
+    // stay aligned with `read_fwd`. Absent when QUAL is missing (`*`).
+    let qual: Vec<u8> = record
+        .quality_scores()
+        .iter()
+        .collect::<io::Result<Vec<u8>>>()?;
+    let read_fwd_qual: Option<Vec<u8>> = if qual.len() as i64 == qlen {
+        Some(match strand {
+            Strand::Rev => qual.into_iter().rev().collect(),
+            Strand::Fwd => qual,
+        })
+    } else {
+        None
+    };
+
     hits.retain(|h| passes_filter(h, opts));
-    emit_read(&mut hits, opts, read_fwd.as_deref(), out)
+    emit_read(
+        &mut hits,
+        opts,
+        read_fwd.as_deref(),
+        read_fwd_qual.as_deref(),
+        out,
+    )
 }
 
 /// Reverse-complement a read sequence (ASCII bases).

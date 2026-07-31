@@ -162,6 +162,14 @@ reverse-complemented iff the primary is reverse-mapped (`src/aln.rs::revcomp`),
 usable only when `SEQ.len()==qlen` (soft-clipped primary). For CRAM the `SEQ` is
 reconstructed against the `-r` reference. See `src/extract.rs::eseq_info`.
 
+`equal=<phred>` is the quality of the eseq window, emitted **between `elen` and
+`eseq`** — only when `eseq` is emitted and per-base qualities cover the window
+(omitted when `QUAL` is `*`). It turns each base quality to an error rate, means
+the expected errors over the window, and scales back to phred:
+`round(-10*log10((Σ 10^(-Q_i/10))/L))`, `L=|eseq|` (`eseq_qual`). Qualities are
+read-forward too: reversed (not complemented) on a reverse-mapped primary. For
+constant quality `Q` this is `Q`.
+
 ### Alignment file vs PAF parity
 
 For the same alignments the output is identical except `aln_len` of supplementary
@@ -175,7 +183,7 @@ CRAM outputs are byte-identical for the same reads (`tests/extract.rs::cram_matc
 ### Output (9 columns, TAB-delimited)
 
 ```
-ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  source=..;idx=..;aln_len=..;qlen=..;mapq=..[;elen=..;eseq=..]
+ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  source=..;idx=..;aln_len=..;qlen=..;mapq=..[;elen=..[;equal=..;eseq=..]]
 ```
 
 `ori` is two characters, each `>`/`<`, or `.` for a missing mate. Tag **order in

@@ -261,9 +261,13 @@ fn cram_matches_bam() {
         String::from_utf8_lossy(&cram.stderr)
     );
 
-    assert_eq!(
-        String::from_utf8(cram.stdout).unwrap(),
-        String::from_utf8(bam.stdout).unwrap()
+    let cram_out = String::from_utf8(cram.stdout).unwrap();
+    assert_eq!(cram_out, String::from_utf8(bam.stdout).unwrap());
+    // cram01 has constant QUAL Q40, so `equal` is 40 and sits between elen and
+    // eseq (the reference-decoded sequence carries usable qualities under CRAM).
+    assert!(
+        cram_out.contains(";equal=40;eseq="),
+        "expected equal=40 before eseq:\n{cram_out}"
     );
 }
 
@@ -281,6 +285,39 @@ fn cram_requires_reference() {
     assert!(
         stderr.contains("-r") && stderr.to_lowercase().contains("reference"),
         "expected a reference/-r error, got: {stderr}"
+    );
+}
+
+#[test]
+fn no_qual_omits_equal() {
+    // A record may carry SEQ but no base qualities (QUAL = `*`). Then `eseq` is
+    // still emitted but `equal` cannot be computed, so it is omitted. Fed as an
+    // inline SAM on stdin (format is autodetected). 200M60S -> a right clip whose
+    // 60 bp exceeds the default -c, so a clip breakend with eseq is emitted.
+    let seq = "ACGT".repeat(65); // 260 bp = 200 aligned + 60 clipped
+    let sam = format!(
+        "@HD\tVN:1.6\tSO:unsorted\n@SQ\tSN:chrA\tLN:400\nr1\t0\tchrA\t1\t60\t200M60S\t*\t0\t0\t{seq}\t*\n"
+    );
+    let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
+        .arg("extract")
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn badclip");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(sam.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains(";eseq="), "eseq should be emitted:\n{stdout}");
+    assert!(
+        !stdout.contains("equal="),
+        "equal must be omitted when QUAL is absent:\n{stdout}"
     );
 }
 

@@ -90,7 +90,7 @@ because minimap2's
 Tab-delimited, 9 columns:
 
 ```
-ctg1   pos1   ori   ctg2   pos2   qname   mapq   strand   source=..;idx=..;aln_len=..;qlen=..;mapq=..[;elen=..;eseq=..]
+ctg1   pos1   ori   ctg2   pos2   qname   mapq   strand   source=..;idx=..;aln_len=..;qlen=..;mapq=..[;elen=..[;equal=..;eseq=..]]
 ```
 
 `ori` is two characters, each `>` or `<` (or `.` for a missing mate).
@@ -119,6 +119,11 @@ orientation (not flipped with the output):
 - `elen=leftFlank,qdist,rightFlank` — sizes of the extracted window: up to `-f`
   bases either side of the junction (`qdist` is the query gap, `0` for a clip),
   so `|eseq| = leftFlank + |qdist| + rightFlank`.
+- `equal=<phred>` — the quality of the `eseq` window: each base quality is turned
+  into an error rate, the expected errors are averaged over the window and scaled
+  back to phred (`-10·log10((Σ 10^(-Q/10))/|eseq|)`). Sits between `elen` and
+  `eseq`, emitted only when `eseq` is (and when the read has base qualities). For
+  a constant quality `Q` it is `Q`.
 - `eseq=<bases>` — the read sequence over that window, on the **original read
   strand**. Omitted (while `elen` stays) when the window exceeds `-e`.
 

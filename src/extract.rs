@@ -89,16 +89,18 @@ fn flip(ori: char) -> char {
     }
 }
 
-/// Build the `;elen=..[;eseq=..]` INFO suffix for a breakend window.
+/// Build the `;elen=..[;equal=..;eseq=..]` INFO suffix for a breakend window.
 ///
 /// The window spans read-forward query offsets `[lo, hi]` (a single point for a
 /// clip, `qdist == 0`); it is padded by `opts.flank` on each side, clamped to
-/// the read. `elen` is emitted whenever a read sequence is available (BAM);
-/// `eseq` (the substring `read_seq[start..end]`, on the original read strand) is
-/// appended only when the window is at most `opts.max_eseq` long. Returns `""`
-/// when `read_seq` is `None` (PAF).
+/// the read. `elen` is emitted whenever a read sequence is available (alignment
+/// input); `eseq` (the substring `read_seq[start..end]`, on the original read
+/// strand) is appended only when the window is at most `opts.max_eseq` long.
+/// `equal` (the phred quality of that window) precedes `eseq` when per-base
+/// qualities are available. Returns `""` when `read_seq` is `None` (PAF).
 fn eseq_info(
     read_seq: Option<&[u8]>,
+    read_qual: Option<&[u8]>,
     opts: &ExtractOpts,
     qlen: i64,
     lo: i64,
@@ -114,10 +116,31 @@ fn eseq_info(
     let right = end - hi;
     let mut info = format!(";elen={left},{qdist},{right}");
     if end - start <= opts.max_eseq && start >= 0 && start <= end && (end as usize) <= seq.len() {
+        let (s, e) = (start as usize, end as usize);
+        // `equal` (phred): mean expected error rate over the window, from the
+        // per-base qualities, scaled back to phred. Only when qualities cover it.
+        if let Some(qual) = read_qual
+            && e > s
+            && e <= qual.len()
+        {
+            info.push_str(&format!(";equal={}", eseq_qual(&qual[s..e])));
+        }
         info.push_str(";eseq=");
-        info.push_str(&String::from_utf8_lossy(&seq[start as usize..end as usize]));
+        info.push_str(&String::from_utf8_lossy(&seq[s..e]));
     }
     info
+}
+
+/// Phred quality of an eseq window: turn each base quality into an error rate,
+/// average the expected errors over the window, and scale back to phred —
+/// `-10 * log10( (Σ 10^(-q/10)) / L )`, rounded. For constant `q` this is `q`.
+fn eseq_qual(quals: &[u8]) -> i64 {
+    let expected_errors: f64 = quals
+        .iter()
+        .map(|&q| 10f64.powf(-(q as f64) / 10.0))
+        .sum();
+    let mean = expected_errors / quals.len() as f64;
+    (-10.0 * mean.log10()).round() as i64
 }
 
 /// Run the extract command end to end.
@@ -147,24 +170,26 @@ fn run_paf(reader: Box<dyn BufRead>, opts: &ExtractOpts, out: &mut impl Write) -
         if let Some(first) = group.first()
             && first.qname != hit.qname
         {
-            // PAF carries no read sequence, so eseq/elen are unavailable.
-            emit_read(&mut group, opts, None, out)?;
+            // PAF carries no read sequence, so eseq/elen/equal are unavailable.
+            emit_read(&mut group, opts, None, None, out)?;
             group.clear();
         }
         group.push(hit);
     }
-    emit_read(&mut group, opts, None, out)?;
+    emit_read(&mut group, opts, None, None, out)?;
     Ok(())
 }
 
 /// Emit clip and join breakends for one read's hits (sorted here by `qs`).
 ///
 /// `read_seq`, when `Some`, is the read sequence on the original read strand
-/// (BAM only), enabling the `elen`/`eseq` tags.
+/// (alignment input only), enabling the `elen`/`eseq` tags. `read_qual` is the
+/// matching per-base qualities (same orientation), enabling the `equal` tag.
 pub(crate) fn emit_read(
     hits: &mut [Hit],
     opts: &ExtractOpts,
     read_seq: Option<&[u8]>,
+    read_qual: Option<&[u8]>,
     out: &mut impl Write,
 ) -> io::Result<()> {
     if hits.is_empty() {
@@ -194,13 +219,14 @@ pub(crate) fn emit_read(
             first.qs,
             opts,
             read_seq,
+            read_qual,
         )?;
         idx += 1;
     }
 
     // Joins between adjacent hits along the read.
     for pair in hits.windows(2) {
-        emit_join(out, idx, &pair[0], &pair[1], opts, read_seq)?;
+        emit_join(out, idx, &pair[0], &pair[1], opts, read_seq, read_qual)?;
         idx += 1;
     }
 
@@ -218,6 +244,7 @@ pub(crate) fn emit_read(
             last.qe,
             opts,
             read_seq,
+            read_qual,
         )?;
     }
 
@@ -242,8 +269,9 @@ fn emit_clip(
     qpos: i64,
     opts: &ExtractOpts,
     read_seq: Option<&[u8]>,
+    read_qual: Option<&[u8]>,
 ) -> io::Result<()> {
-    let eseq = eseq_info(read_seq, opts, h.qlen, qpos, qpos, 0);
+    let eseq = eseq_info(read_seq, read_qual, opts, h.qlen, qpos, qpos, 0);
     writeln!(
         out,
         "{}\t{}\t{}.\t.\t.\t{}\t{}\t{}\tsource={};idx={};aln_len={},0;qlen={},0,{};mapq={},0{}",
@@ -272,6 +300,7 @@ fn emit_join(
     y1: &Hit,
     opts: &ExtractOpts,
     read_seq: Option<&[u8]>,
+    read_qual: Option<&[u8]>,
 ) -> io::Result<()> {
     // Endpoints: read-end side of the upstream hit joins the read-start side
     // of the downstream hit.
@@ -308,7 +337,7 @@ fn emit_join(
     // the junction gap/overlap between the two hits, padded by `flank`.
     let lo = y0.qe.min(y1.qs);
     let hi = y0.qe.max(y1.qs);
-    let eseq = eseq_info(read_seq, opts, y0.qlen, lo, hi, mid);
+    let eseq = eseq_info(read_seq, read_qual, opts, y0.qlen, lo, hi, mid);
     writeln!(
         out,
         "{}\t{}\t{}{}\t{}\t{}\t{}\t{}\t{}\tsource={};idx={};aln_len={},{};qlen={},{},{};mapq={},{}{}",
