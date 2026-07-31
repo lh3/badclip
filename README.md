@@ -11,6 +11,19 @@ junctions between chimeric alignments of the same read (*joins*). Joins reveal
 structural rearrangements (translocations, inversions, large indels); clips
 flag reads that end abruptly against nothing.
 
+It has four subcommands, forming a pipeline:
+
+| Subcommand | Purpose |
+|------------|---------|
+| [`extract`](#extract) | Find breakends in read alignments (the main step). |
+| [`geteseq`](#geteseq) | Turn `extract` output into a FASTA of breakend sequences. |
+| [`flteseq`](#flteseq) | Drop breakends already explained by a pangenome. |
+| [`merge`](#merge) | Cluster per-read breakends into consensus SV calls. |
+
+Every subcommand reads its input from a file or from stdin via `-`, transparently
+decompresses gzip'd input, and prints its own `--help` (instead of waiting on
+stdin) when run with no input.
+
 ## Install
 
 ```sh
@@ -18,15 +31,16 @@ cargo build --release
 # binary at target/release/badclip
 ```
 
-## Usage
+## `extract`
+
+Find breakends (clips and joins) in read-to-reference alignments.
 
 ```sh
 badclip extract [OPTIONS] [INPUT]
 ```
 
 - `INPUT` — alignments in **BAM** by default, or **PAF** with `--paf`. Pass `-`
-  to read from stdin. PAF input may be gzip'd (auto-detected). Running `badclip
-  extract` with no input prints this help instead of waiting on stdin.
+  to read from stdin. PAF input may be gzip'd (auto-detected).
 
 Options:
 
@@ -62,7 +76,7 @@ BAM and PAF produce the same output for the same alignments, with one caveat:
 `aln_len` for supplementary hits is a few bp smaller from BAM because minimap2's
 `SA` CIGAR is collapsed (the primary hit's `aln_len` matches).
 
-## Output
+### Output
 
 Tab-delimited, 9 columns:
 
@@ -116,8 +130,15 @@ orientation (not flipped with the output):
 
 ## `geteseq`
 
-Convert `extract` output into a FASTA of the extracted breakend sequences. For
-each record that has an `eseq` tag, it writes one FASTA entry named
+Convert `extract` output into a FASTA of the extracted breakend sequences.
+
+```sh
+badclip geteseq [INPUT]
+```
+
+- `INPUT` — `extract` output (gzip ok; `-` or omit for stdin).
+
+For each record that has an `eseq` tag, it writes one FASTA entry named
 `readName_idx_leftFlank_rightFlank` (from the `idx` and `elen` tags) with the
 `eseq` bases; records without `eseq` are skipped.
 
@@ -126,10 +147,7 @@ badclip extract aln.bam | badclip geteseq - > eseq.fa   # "-" = stdin
 badclip geteseq extract.txt                             # or a file
 ```
 
-Running `geteseq` (or `flteseq`) with no input prints its help instead of
-waiting on stdin; use `-` to read stdin.
-
-Example:
+Example output:
 
 ```
 >m84039_.../234884533/ccs_0_250_250
@@ -143,8 +161,17 @@ pangenome. Align the `geteseq` FASTA against a pangenome index (e.g.
 `ropebwt3 sw`) to get a PAF, then:
 
 ```sh
-badclip flteseq [-l 50] <extractOut> <ropebwt3.paf>
+badclip flteseq [OPTIONS] <extractOut> <ropebwt3.paf>
 ```
+
+- `<extractOut>` — `extract` output (gzip ok; `-` for stdin).
+- `<ropebwt3.paf>` — the `ropebwt3 sw` PAF of the `geteseq` FASTA (gzip ok).
+
+Options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-l`, `--margin <INT>` | `50` | Margin extending the protected junction interval on each side. |
 
 A record is **dropped** if it has no `eseq` tag, or if some ropebwt3 alignment's
 query interval `[qs,qe]` on the eseq contains the junction interval
@@ -152,9 +179,9 @@ query interval `[qs,qe]` on the eseq contains the junction interval
 breakend, with `-l` margin on each side — the breakend is "protected"). Surviving
 `extract` lines are printed verbatim.
 
-Both inputs may be gzip'd. The PAF's query names must be the `geteseq` names, and
-in the same order as the `eseq` records (as produced by the pipeline), so the two
-files are streamed without loading into memory.
+The PAF's query names must be the `geteseq` names, and in the same order as the
+`eseq` records (as produced by the pipeline), so the two files are streamed
+without loading into memory.
 
 ```sh
 badclip extract aln.bam > clip.txt
@@ -162,9 +189,54 @@ badclip geteseq clip.txt | ropebwt3 sw -d pangenome.fmd - > rb3.paf
 badclip flteseq clip.txt rb3.paf > novel.txt
 ```
 
+## `merge`
+
+Cluster per-read breakends from `extract` into consensus SV calls, each with a
+supporting-read count. Unlike the streaming subcommands above, `merge` loads its
+input into memory and sorts it by `(ctg1, pos1)`, so the input need not be
+pre-sorted.
+
+```sh
+badclip merge [OPTIONS] [INPUT]
+```
+
+- `INPUT` — `extract` output (gzip ok; `-` or omit for stdin).
+
+Options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-c`, `--min-cnt <INT>` | `4` | Minimum supporting-read count to emit a call. |
+| `-s`, `--min-cnt-strand <INT>` | `2` | Minimum read count on each strand. |
+| `-w`, `--win-size <INT>` | `100` | Clustering window (bp). |
+| `-A`, `--max-allele <INT>` | `100` | Cap on simultaneously-open clusters. |
+| `-C`, `--max-check <INT>` | `500` | Maximum reads compared per cluster. |
+
+Breakends within `-w` bp on both endpoints (with `><`/`<>` treated as the same
+inversion) are grouped; a group is reported only if it has at least `-c` reads
+with at least `-s` on each strand. Output keeps the 9-column, TAB-delimited
+`extract` shape, with the supporting-read count in the `mapq` slot and a
+merge-derived INFO column:
+
+```
+ctg1   pos1   ori   ctg2   pos2   .   count   strand   avg_mapq=..;count=..[;count_fr=..;count_rf=..[;foldback]];reads=..
+```
+
+- `count=nFwd,nRev` — supporting reads on each strand (the column-7 `count` is
+  their sum).
+- `count_fr`, `count_rf` — reads oriented `><` and `<>`; present only when the
+  cluster has at least one such read. `foldback` is added when only one of the
+  two orientations is present (`count_fr` or `count_rf` is `0`) and both
+  endpoints are on the same contig.
+- `reads=name,…` — the supporting read names.
+
+```sh
+badclip extract aln.bam | badclip merge - > sv.txt
+```
+
 ## Status
 
-BAM (default) and PAF (`--paf`) input are implemented and share the same
-breakend logic; `geteseq` turns extract output into FASTA, and `flteseq` filters
-breakends against a pangenome. See `CLAUDE.md` for internals and the
-interval/offset convention.
+All four subcommands are implemented: `extract` (BAM default, or PAF via
+`--paf`) finds breakends; `geteseq` turns its output into FASTA; `flteseq`
+filters breakends against a pangenome; and `merge` clusters them into consensus
+SV calls. See `CLAUDE.md` for internals and the interval/offset convention.
