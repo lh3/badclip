@@ -187,7 +187,7 @@ CRAM outputs are byte-identical for the same reads (`tests/extract.rs::cram_matc
 ### Output (9 columns, TAB-delimited)
 
 ```
-ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  source=..;idx=..;aln_len=..;qlen=..;mapq=..[;elen=..[;equal=..;eseq=..]]
+ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  source=..;idx=..;n_aln=..;aln_len=..;qlen=..;mapq=..[;elen=..[;equal=..;eseq=..]]
 ```
 
 `ori` is two characters, each `>`/`<`, or `.` for a missing mate. Tag **order in
@@ -202,6 +202,9 @@ per-read and `elen`/`eseq`, appended for BAM, do not swap):
   for readability. Same on every record of a run.
 - `idx=N` — 0-based index of this clip/breakend within the read, emission order
   (left clip, joins, right clip); resets per read (`emit_read`'s local counter).
+- `n_aln=N` — number of alignments (primary + supplementary) for the read that
+  passed the `-q`/`-a` filters, i.e. `hits.len()` at `emit_read`. A read-level
+  constant, the same on every breakend of the read.
 - `aln_len=len1,len2` — alignment block length (PAF col 11) of each hit; for a
   clip `len2 = 0`.
 - `qlen=left,middle,right` — query lengths summing to the read length.

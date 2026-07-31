@@ -90,7 +90,7 @@ because minimap2's
 Tab-delimited, 9 columns:
 
 ```
-ctg1   pos1   ori   ctg2   pos2   qname   mapq   strand   source=..;idx=..;aln_len=..;qlen=..;mapq=..[;elen=..[;equal=..;eseq=..]]
+ctg1   pos1   ori   ctg2   pos2   qname   mapq   strand   source=..;idx=..;n_aln=..;aln_len=..;qlen=..;mapq=..[;elen=..[;equal=..;eseq=..]]
 ```
 
 `ori` is two characters, each `>` or `<` (or `.` for a missing mate).
@@ -104,6 +104,9 @@ key). It is written as `source`, then `idx`, then three tags in output order
   first only for readability; the same on every record.
 - `idx=N` — 0-based index of this clip/breakend within the read, in emission
   order (left clip, joins, right clip); resets per read.
+- `n_aln=N` — number of alignments (primary + supplementary) for the read that
+  passed the `-q`/`-a` filters. Same on every breakend of the read (e.g. `1` for a
+  single-alignment read, `3` for a 3-way chimera).
 - `aln_len=len1,len2` — alignment length (PAF column 11) of each hit; a clip has
   no second hit, so `len2 = 0`.
 - `qlen=left,middle,right` — query lengths that sum to the read length. For a

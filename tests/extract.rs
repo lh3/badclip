@@ -91,8 +91,8 @@ fn clip01_matches() {
         expected(
             "clip01",
             &[
-                "source=foo;idx=0;aln_len=14732,0;qlen=14925,0,141;mapq=1,0",
-                "source=foo;idx=1;aln_len=14732,0;qlen=14774,0,292;mapq=1,0",
+                "source=foo;idx=0;n_aln=1;aln_len=14732,0;qlen=14925,0,141;mapq=1,0",
+                "source=foo;idx=1;n_aln=1;aln_len=14732,0;qlen=14774,0,292;mapq=1,0",
             ]
         )
     );
@@ -105,7 +105,7 @@ fn join01_matches() {
         run_extract_file("join01"),
         expected(
             "join01",
-            &["source=foo;idx=0;aln_len=16881,2475;qlen=16848,15,2474;mapq=60,60"]
+            &["source=foo;idx=0;n_aln=2;aln_len=16881,2475;qlen=16848,15,2474;mapq=60,60"]
         )
     );
 }
@@ -117,7 +117,7 @@ fn join02_matches() {
         run_extract_file("join02"),
         expected(
             "join02",
-            &["source=foo;idx=0;aln_len=16879,26284;qlen=16808,1,26163;mapq=60,60"]
+            &["source=foo;idx=0;n_aln=2;aln_len=16879,26284;qlen=16808,1,26163;mapq=60,60"]
         )
     );
 }
@@ -129,7 +129,7 @@ fn join03_matches() {
         run_extract_file("join03"),
         expected(
             "join03",
-            &["source=foo;idx=0;aln_len=29505,5668;qlen=29436,1,5661;mapq=60,60"]
+            &["source=foo;idx=0;n_aln=2;aln_len=29505,5668;qlen=29436,1,5661;mapq=60,60"]
         )
     );
 }
@@ -147,7 +147,7 @@ fn min_aln_len_drops_one_hit() {
     assert_eq!(
         run_extract_file_args("join01", &["-a", "3000"]),
         "chr22\t22131975\t<.\t.\t.\tm84039_230117_233243_s1/257233489/ccs\t60\t+\
-         \tsource=foo;idx=0;aln_len=16881,0;qlen=16848,0,2489;mapq=60,0\n"
+         \tsource=foo;idx=0;n_aln=1;aln_len=16881,0;qlen=16848,0,2489;mapq=60,0\n"
     );
 }
 
@@ -158,7 +158,7 @@ fn stdin_matches_file() {
         run_extract_stdin(&paf),
         expected(
             "join02",
-            &["source=foo;idx=0;aln_len=16879,26284;qlen=16808,1,26163;mapq=60,60"]
+            &["source=foo;idx=0;n_aln=2;aln_len=16879,26284;qlen=16808,1,26163;mapq=60,60"]
         )
     );
 }
@@ -199,7 +199,7 @@ fn gzip_is_detected() {
         run_extract_stdin(&gz),
         expected(
             "join01",
-            &["source=foo;idx=0;aln_len=16881,2475;qlen=16848,15,2474;mapq=60,60"]
+            &["source=foo;idx=0;n_aln=2;aln_len=16881,2475;qlen=16848,15,2474;mapq=60,60"]
         )
     );
 }
@@ -210,8 +210,8 @@ fn paf_keeps_inversion() {
     // Keeping the tp:A:I line yields two joins (the inverted middle segment),
     // matching what BAM produces from the SA tag.
     let expected = "\
-chr10\t91443587\t<>\tchr10\t91446029\tm84039_230117_233243_s1/251662187/ccs\t60\t-\tsource=foo;idx=0;aln_len=2443,19097;qlen=2926,0,19078;mapq=60,60
-chr10\t91443587\t><\tchr10\t91446029\tm84039_230117_233243_s1/251662187/ccs\t60\t-\tsource=foo;idx=1;aln_len=485,2443;qlen=485,0,21519;mapq=60,60
+chr10\t91443587\t<>\tchr10\t91446029\tm84039_230117_233243_s1/251662187/ccs\t60\t-\tsource=foo;idx=0;n_aln=3;aln_len=2443,19097;qlen=2926,0,19078;mapq=60,60
+chr10\t91443587\t><\tchr10\t91446029\tm84039_230117_233243_s1/251662187/ccs\t60\t-\tsource=foo;idx=1;n_aln=3;aln_len=485,2443;qlen=485,0,21519;mapq=60,60
 ";
     assert_eq!(run_extract_file("inv01"), expected);
 }

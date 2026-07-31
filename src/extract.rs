@@ -7,12 +7,13 @@
 //! layout:
 //!
 //! ```text
-//! ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  source=..;idx=..;aln_len=..;qlen=..;mapq=..
+//! ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  source=..;idx=..;n_aln=..;aln_len=..;qlen=..;mapq=..
 //! ```
 //!
 //! where `ori` is two characters, each `>`/`<`, or `.` for a missing mate. The
 //! INFO column opens with `source=<name>` (the `-s` dataset label; first only
-//! for readability — tag order is not significant) and `idx`, then three tags:
+//! for readability — tag order is not significant), `idx`, and `n_aln` (the
+//! read's alignment count that passed filtering), then three tags:
 //! - `aln_len=len1,len2` — alignment block lengths (PAF col 11) of the hits at
 //!   `ctg1:pos1` and `ctg2:pos2`; for a clip `len2` is `0`.
 //! - `qlen=left,middle,right` — query lengths whose sum is the read length.
@@ -195,6 +196,9 @@ pub(crate) fn emit_read(
     if hits.is_empty() {
         return Ok(());
     }
+    // Number of alignments for this read that passed filtering (primary +
+    // supplementary). A read-level constant, stamped on every breakend it emits.
+    let n_aln = hits.len() as i64;
     // Sort chimeric hits by their start position along the read.
     hits.sort_by_key(|h| h.qs);
 
@@ -212,6 +216,7 @@ pub(crate) fn emit_read(
         emit_clip(
             out,
             idx,
+            n_aln,
             first,
             first.fts(),
             arrow,
@@ -226,7 +231,7 @@ pub(crate) fn emit_read(
 
     // Joins between adjacent hits along the read.
     for pair in hits.windows(2) {
-        emit_join(out, idx, &pair[0], &pair[1], opts, read_seq, read_qual)?;
+        emit_join(out, idx, n_aln, &pair[0], &pair[1], opts, read_seq, read_qual)?;
         idx += 1;
     }
 
@@ -237,6 +242,7 @@ pub(crate) fn emit_read(
         emit_clip(
             out,
             idx,
+            n_aln,
             last,
             last.fte(),
             arrow,
@@ -262,6 +268,7 @@ pub(crate) fn emit_read(
 fn emit_clip(
     out: &mut impl Write,
     idx: i64,
+    n_aln: i64,
     h: &Hit,
     pos: i64,
     arrow: char,
@@ -274,7 +281,7 @@ fn emit_clip(
     let eseq = eseq_info(read_seq, read_qual, opts, h.qlen, qpos, qpos, 0);
     writeln!(
         out,
-        "{}\t{}\t{}.\t.\t.\t{}\t{}\t{}\tsource={};idx={};aln_len={},0;qlen={},0,{};mapq={},0{}",
+        "{}\t{}\t{}.\t.\t.\t{}\t{}\t{}\tsource={};idx={};n_aln={};aln_len={},0;qlen={},0,{};mapq={},0{}",
         h.ctg,
         pos,
         arrow,
@@ -283,6 +290,7 @@ fn emit_clip(
         h.strand.as_char(),
         opts.source,
         idx,
+        n_aln,
         h.alen,
         h.qlen - clipped,
         clipped,
@@ -296,6 +304,7 @@ fn emit_clip(
 fn emit_join(
     out: &mut impl Write,
     idx: i64,
+    n_aln: i64,
     y0: &Hit,
     y1: &Hit,
     opts: &ExtractOpts,
@@ -340,7 +349,7 @@ fn emit_join(
     let eseq = eseq_info(read_seq, read_qual, opts, y0.qlen, lo, hi, mid);
     writeln!(
         out,
-        "{}\t{}\t{}{}\t{}\t{}\t{}\t{}\t{}\tsource={};idx={};aln_len={},{};qlen={},{},{};mapq={},{}{}",
+        "{}\t{}\t{}{}\t{}\t{}\t{}\t{}\t{}\tsource={};idx={};n_aln={};aln_len={},{};qlen={},{},{};mapq={},{}{}",
         ctg0,
         pos0,
         o0,
@@ -352,6 +361,7 @@ fn emit_join(
         strand,
         opts.source,
         idx,
+        n_aln,
         len0,
         len1,
         left,
