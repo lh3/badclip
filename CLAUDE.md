@@ -158,10 +158,11 @@ stdin). Both paths build a `Vec<Hit>` per read and feed the shared `emit_read`.
     is ignored (repository not built) for BAM/SAM. `eseq` for CRAM is the
     reference-reconstructed `SEQ`, identical to the BAM output for the same reads.
   - **ALT contigs** (`--alt FILE`, alignment-file input only; `load_alt`): a
-    `HashSet` of contig names (each line's first token, so a plain list or a
-    bwa-kit `.alt` SAM both work; gzip ok). A read whose **primary** hit lands on
-    an ALT contig is skipped entirely; ALT hits in the `SA` tag are dropped before
-    clips/joins form. No-op for `--paf`.
+    `HashSet` of contig names — `@`-prefixed lines (SAM headers) are ignored and
+    the first tab-delimited column of the rest is the contig name, so a plain
+    one-name-per-line list or a bwa-kit `.alt` SAM both work (gzip ok). A read
+    whose **primary** hit lands on an ALT contig is skipped entirely; ALT hits in
+    the `SA` tag are dropped before clips/joins form. No-op for `--paf`.
   - noodles crates: util 0.82 (feature `alignment`) / sam 0.87 / core 0.20 /
     cram 0.96 / fasta 0.64.
 

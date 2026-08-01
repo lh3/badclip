@@ -74,17 +74,24 @@ pub fn run(input: &str, opts: &ExtractOpts, out: &mut impl Write) -> io::Result<
     Ok(())
 }
 
-/// Load the set of ALT contig names from `--alt` (gzip ok). Each line's first
-/// whitespace-delimited token is taken, so both a plain one-name-per-line list
-/// and a bwa-kit `.alt` file (SAM lines whose QNAME is the ALT contig) work.
-/// Empty when no file is given.
+/// Load the set of ALT contig names from `--alt` (gzip ok). Lines starting with
+/// `@` (SAM headers) are ignored; for the rest the first column (tab-delimited)
+/// is taken as the contig name. So both a plain one-name-per-line list and a
+/// bwa-kit `.alt` file (SAM records whose QNAME is the ALT contig, possibly with
+/// `@` headers) work. Empty when no file is given.
 fn load_alt(path: Option<&str>) -> io::Result<HashSet<String>> {
     let mut set = HashSet::new();
     let Some(path) = path else {
         return Ok(set);
     };
     for line in open_reader(path)?.lines() {
-        if let Some(name) = line?.split_whitespace().next() {
+        let line = line?;
+        if line.starts_with('@') {
+            continue;
+        }
+        if let Some(name) = line.split('\t').next()
+            && !name.is_empty()
+        {
             set.insert(name.to_string());
         }
     }

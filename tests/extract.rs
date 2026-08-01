@@ -387,8 +387,14 @@ fn extract_alt_contigs() {
          altprim\t0\tchrAlt\t1\t60\t100M60S\t*\t0\t0\t{s160}\t{q160}\n\
          normal\t0\tchrA\t1\t60\t100M100S\t*\t0\t0\t{s200}\t{q200}\tSA:Z:chrAlt,1,+,100S100M,60,0\n"
     );
+    // A bwa-kit `.alt`-style file: `@` header lines are ignored, and the first
+    // (tab-delimited) column of each record is the ALT contig name.
     let alt_path = format!("{}/alt_contigs.txt", env!("CARGO_TARGET_TMPDIR"));
-    std::fs::write(&alt_path, "chrAlt\n").unwrap();
+    std::fs::write(
+        &alt_path,
+        "@HD\tVN:1.6\n@SQ\tSN:chrA\tLN:400\nchrAlt\t0\tchrA\t1\t60\t100M\t*\t0\t0\t*\t*\n",
+    )
+    .unwrap();
 
     let run = |args: &[&str]| -> String {
         let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
