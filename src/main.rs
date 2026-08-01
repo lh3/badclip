@@ -122,6 +122,10 @@ enum Command {
         /// Drop input breakends whose eseq quality (`equal` tag) is below this.
         #[arg(short = 'Q', long = "min-equal", default_value_t = 20)]
         min_equal: i64,
+
+        /// Drop input breakends whose col-7 mapq is below this.
+        #[arg(short = 'q', long = "min-mapq", default_value_t = 0)]
+        min_mapq: i64,
     },
 }
 
@@ -195,6 +199,7 @@ fn main() -> ExitCode {
             max_allele,
             max_check,
             min_equal,
+            min_mapq,
         } => {
             let Some(input) = input else {
                 return print_subcommand_help("merge");
@@ -207,6 +212,7 @@ fn main() -> ExitCode {
                 max_allele,
                 max_check,
                 min_equal,
+                min_mapq,
             })
         }
     };

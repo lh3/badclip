@@ -22,7 +22,7 @@
 //!   `middle` is the (possibly negative) query gap between the two hits.
 //! - `mapq=mapq1,mapq2` — the mapq of each hit, `mapq1` for `ctg1:pos1` and
 //!   `mapq2` for `ctg2:pos2`; for a clip `mapq2` is `0`. (Distinct from the
-//!   field-7 mapq column, which is the `min` of a join's two mapqs.)
+//!   field-7 mapq column, which is the `max` of a join's two mapqs.)
 
 use std::io::{self, BufRead, Write};
 
@@ -341,7 +341,7 @@ fn emit_join(
         strand = '-';
     }
 
-    let mapq = y0.mapq.min(y1.mapq);
+    let mapq = y0.mapq.max(y1.mapq);
     // The eseq window is read-forward (not affected by the output flip): it spans
     // the junction gap/overlap between the two hits, padded by `flank`.
     let lo = y0.qe.min(y1.qs);

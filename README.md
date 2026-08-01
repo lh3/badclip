@@ -115,7 +115,7 @@ key). It is written as `source`, then `idx`, then three tags in output order
   clip, `right` is the clipped length and `middle` is `0`; for a join, `middle`
   is the (possibly negative) query gap between the two hits.
 - `mapq=mapq1,mapq2` — mapq of each hit; for a clip `mapq2 = 0`. (The `mapq`
-  *column* above is the smaller of a join's two mapqs; this tag keeps both.)
+  *column* above is the larger of a join's two mapqs; this tag keeps both.)
 
 The last two tags come from **alignment-file input only** (PAF has no read
 sequence; for CRAM the sequence is reconstructed against `-r`), in read-forward
@@ -249,6 +249,7 @@ Options:
 | `-A`, `--max-allele <INT>` | `100` | Cap on simultaneously-open clusters. |
 | `-C`, `--max-check <INT>` | `500` | Maximum reads compared per cluster. |
 | `-Q`, `--min-equal <INT>` | `20` | Drop input breakends whose eseq quality (`equal` tag) is below this before clustering. Breakends without an `equal` tag are kept. |
+| `-q`, `--min-mapq <INT>` | `0` | Drop input breakends whose col-7 mapq (the join's larger, or a clip's mapq) is below this. |
 
 Breakends within `-w` bp on both endpoints (with `><`/`<>` treated as the same
 inversion) are grouped; a group is reported only if it has at least `-c` reads

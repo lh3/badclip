@@ -93,7 +93,8 @@ Flags mirror minisv's kept subset: `-c` min read count (4), `-s` min count on
 each strand (2), `-w` window bp (100), `-A` max active clusters (100), `-C` max
 reads compared per cluster (500). `-Q` (default 20) drops input breakends whose
 `equal` quality is below the threshold before clustering (`parse_rec`); breakends
-without an `equal` tag are kept.
+without an `equal` tag are kept. `-q` (default 0) drops input breakends whose
+col-7 mapq (the join's `max`, or a clip's mapq) is below the threshold.
 
 A cluster is emitted only if `count ≥ -c` and each strand has `≥ -s` reads. The
 representative (`members[len/2]`) supplies the coordinate/`ori`/`strand` fields.
@@ -224,7 +225,7 @@ per-read and `elen`/`eseq`, appended for BAM, do not swap):
   `middle` = 0. Join: `left = y0.qe`, `middle = y1.qs - y0.qe` (query gap, may be
   negative), `right = qlen - y1.qs`, computed in read order then swapped on flip.
 - `mapq=mapq1,mapq2` — mapq of each hit; for a clip `mapq2 = 0`. Note this is
-  distinct from the field-7 mapq column, which is `min(y0.mapq, y1.mapq)` for a
+  distinct from the field-7 mapq column, which is `max(y0.mapq, y1.mapq)` for a
   join.
 
 - **Left clip** (`first.qs > c`): `first.ctg fts(first) arrow_l.  .  .  qname mapq strand INFO`
@@ -233,7 +234,7 @@ per-read and `elen`/`eseq`, appended for BAM, do not swap):
   joins `c1 = (y1.ctg, fts(y1), ori(y1), y1.alen)`. Canonicalize so the smaller
   `(ctg, pos)` is first; if swapped, invert both arrows, swap the two `alen`
   values, the two `mapq` values, and the `qlen` `left`/`right`, and set the
-  `strand` column to `-` (else `+`). The field-7 `mapq` column is `min(y0, y1)`.
+  `strand` column to `-` (else `+`). The field-7 `mapq` column is `max(y0, y1)`.
 
 Helpers: `fts = strand=='+'? ts : te`, `fte = strand=='+'? te : ts`,
 `ori = strand=='+'? '>' : '<'`. Clip arrows: `arrow_l = flip(ori)`,

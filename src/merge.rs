@@ -37,6 +37,8 @@ pub struct MergeOpts {
     pub max_check: i64,
     /// Drop input breakends whose eseq quality (`equal` tag) is below this.
     pub min_equal: i64,
+    /// Drop input breakends whose col-7 mapq is below this.
+    pub min_mapq: i64,
 }
 
 /// One parsed `extract` breakend record. Every extract record is a breakend, so
@@ -62,15 +64,22 @@ struct Cluster {
 }
 
 /// Parse one `extract` line into a `Rec`; `None` for malformed lines (`< 9`
-/// fields) or lines whose `equal` quality is below `min_equal` (lines lacking an
-/// `equal` tag are kept), consistent with the other subcommands.
-fn parse_rec(line: &str, min_equal: i64) -> Option<Rec> {
+/// fields), lines whose col-7 mapq is below `min_mapq`, or lines whose `equal`
+/// quality is below `min_equal` (lines lacking an `equal` tag are kept),
+/// consistent with the other subcommands.
+fn parse_rec(line: &str, min_equal: i64, min_mapq: i64) -> Option<Rec> {
     let f: Vec<&str> = line.split('\t').collect();
     if f.len() < 9 {
         return None;
     }
     let ob = f[2].as_bytes();
     if ob.len() < 2 {
+        return None;
+    }
+    // Drop breakends whose col-7 mapq (the join's max, or a clip's mapq) is below
+    // the threshold.
+    let mapq: i64 = f[6].parse().ok()?;
+    if mapq < min_mapq {
         return None;
     }
     // Drop low-quality-eseq breakends; keep those without an `equal` tag.
@@ -91,7 +100,7 @@ fn parse_rec(line: &str, min_equal: i64) -> Option<Rec> {
         // the sentinel we want (see `same_sv`).
         pos2: f[4].parse().ok(),
         name: f[5].to_string(),
-        mapq: f[6].parse().ok()?,
+        mapq,
         strand: f[7].bytes().next()?,
         // Dataset label from the `source=` INFO tag (order-independent); "." when
         // absent, though extract always emits it.
@@ -217,7 +226,7 @@ pub fn run(opts: &MergeOpts) -> io::Result<()> {
     // deterministic.
     let mut recs: Vec<Rec> = Vec::new();
     for line in open_reader(&opts.input)?.lines() {
-        if let Some(r) = parse_rec(&line?, opts.min_equal) {
+        if let Some(r) = parse_rec(&line?, opts.min_equal, opts.min_mapq) {
             recs.push(r);
         }
     }

@@ -117,6 +117,26 @@ chr1\t1000\t>.\t.\t.\tqlow\t60\t+\tsource=foo;equal=5
 }
 
 #[test]
+fn merge_min_mapq_filters() {
+    // Three clips clustering at chr1:1000; qlo has col-7 mapq 5. -q drops input
+    // breakends whose col-7 mapq is below the threshold before clustering.
+    let input = "\
+chr1\t1000\t>.\t.\t.\tqhi\t60\t+\tsource=foo
+chr1\t1000\t>.\t.\t.\tqhi2\t60\t-\tsource=foo
+chr1\t1000\t>.\t.\t.\tqlo\t5\t+\tsource=foo
+";
+    // -q 20 drops qlo (mapq 5); qhi/qhi2 remain.
+    let got = run_merge_stdin(input, &["-c", "1", "-s", "1", "-q", "20"]);
+    assert!(
+        got.contains("qhi") && got.contains("qhi2") && !got.contains("qlo"),
+        "qlo (mapq 5) should be filtered by -q 20:\n{got}"
+    );
+    // Default -q 0 keeps everything, so qlo appears.
+    let all = run_merge_stdin(input, &["-c", "1", "-s", "1"]);
+    assert!(all.contains("qlo"), "qlo should survive default -q 0:\n{all}");
+}
+
+#[test]
 fn merge_no_input_shows_help() {
     // No file -> print help and exit 2, not block on stdin (stdin is /dev/null).
     let output = Command::new(env!("CARGO_BIN_EXE_badclip"))
