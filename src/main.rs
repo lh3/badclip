@@ -46,10 +46,6 @@ enum Command {
         #[arg(short = 'c', long = "min-clip", default_value_t = 50)]
         min_clip: i64,
 
-        /// Drop hits with mapping quality below this value.
-        #[arg(short = 'q', long = "min-mapq", default_value_t = 0)]
-        min_mapq: i64,
-
         /// Drop hits whose alignment block length (PAF col 11) is below this.
         #[arg(short = 'a', long = "min-aln-len", default_value_t = 0)]
         min_aln_len: i64,
@@ -61,6 +57,14 @@ enum Command {
         /// Maximum extracted sequence length; longer windows omit eseq (BAM only).
         #[arg(short = 'e', long = "max-eseq", default_value_t = 1000)]
         max_eseq: i64,
+
+        /// Drop breakends whose eseq quality (`equal`) is below this (0 = keep all).
+        #[arg(short = 'Q', long = "min-equal", default_value_t = 0)]
+        min_equal: i64,
+
+        /// Drop output lines whose col-7 mapq is below this (post-filter).
+        #[arg(short = 'q', long = "min-mapq", default_value_t = 0)]
+        min_mapq: i64,
     },
 
     /// Convert `extract` output into a FASTA of extracted breakend sequences.
@@ -155,6 +159,7 @@ fn main() -> ExitCode {
             min_aln_len,
             flank,
             max_eseq,
+            min_equal,
         } => {
             // With no input file, show the subcommand help rather than blocking
             // on stdin. Only an explicit "-" reads from stdin.
@@ -171,6 +176,7 @@ fn main() -> ExitCode {
                 min_aln_len,
                 flank,
                 max_eseq,
+                min_equal,
             })
         }
         Command::Geteseq { min_equal, input } => {

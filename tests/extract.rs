@@ -322,6 +322,104 @@ fn no_qual_omits_equal() {
 }
 
 #[test]
+fn extract_min_mapq_is_a_col7_postfilter() {
+    // -q is a post-filter on the emitted line's col-7 mapq; it does NOT drop
+    // alignments upfront. rclip is a lone alignment (mapq 10 -> clip col7=10).
+    // rjoin is a chimera whose primary is mapq 60 and SA supplementary mapq 5, so
+    // the join's col7 = max(60,5) = 60. Fed as an inline SAM on stdin.
+    let s160 = "ACGT".repeat(40);
+    let q160 = "I".repeat(160);
+    let s200 = "ACGT".repeat(50);
+    let q200 = "I".repeat(200);
+    let s100 = "ACGT".repeat(25);
+    let q100 = "I".repeat(100);
+    let sam = format!(
+        "@HD\tVN:1.6\tSO:unsorted\n@SQ\tSN:chrA\tLN:400\n@SQ\tSN:chrB\tLN:400\n\
+         rclip\t0\tchrA\t1\t10\t100M60S\t*\t0\t0\t{s160}\t{q160}\n\
+         rjoin\t0\tchrA\t1\t60\t100M100S\t*\t0\t0\t{s200}\t{q200}\tSA:Z:chrB,1,+,100S100M,5,0\n\
+         rjoin\t2048\tchrB\t1\t5\t100H100M\t*\t0\t0\t{s100}\t{q100}\tSA:Z:chrA,1,+,100M100S,60,0\n"
+    );
+    let run = |args: &[&str]| -> String {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
+            .arg("extract")
+            .args(args)
+            .arg("-")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn badclip");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(sam.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap()
+    };
+
+    // Default -q 0: both the col7=10 clip and the col7=60 join are emitted.
+    let all = run(&[]);
+    assert!(all.contains("rclip") && all.contains("rjoin"), "default:\n{all}");
+    // -q 20: the clip (col7=10) is dropped; the join (col7=60) survives, and its
+    // mapq tag still shows the mapq-5 hit -> the alignment was NOT dropped upfront.
+    let filtered = run(&["-q", "20"]);
+    assert!(!filtered.contains("rclip"), "clip col7=10 should drop:\n{filtered}");
+    assert!(
+        filtered.contains("rjoin") && filtered.contains("n_aln=2;aln_len=100,100")
+            && filtered.contains("mapq=60,5"),
+        "join col7=60 should survive with both alignments intact:\n{filtered}"
+    );
+}
+
+#[test]
+fn extract_min_equal_drops_low_quality() {
+    // -Q (default 0 = keep all) drops breakends whose computed `equal` is below
+    // the threshold, to shrink downstream input. rlow's window is all phred 5
+    // (equal 5), rhigh's all phred 40 (equal 40); each 100M60S read emits one
+    // right clip. Fed as an inline SAM on stdin.
+    let seq = "ACGT".repeat(40); // 160 bp = 100 aligned + 60 clipped
+    let qlow = "&".repeat(160); // ASCII 38 -> phred 5
+    let qhigh = "I".repeat(160); // ASCII 73 -> phred 40
+    let sam = format!(
+        "@HD\tVN:1.6\tSO:unsorted\n@SQ\tSN:chrA\tLN:400\n\
+         rlow\t0\tchrA\t1\t60\t100M60S\t*\t0\t0\t{seq}\t{qlow}\n\
+         rhigh\t0\tchrA\t1\t60\t100M60S\t*\t0\t0\t{seq}\t{qhigh}\n"
+    );
+
+    let run = |args: &[&str]| -> String {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
+            .arg("extract")
+            .args(args)
+            .arg("-")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn badclip");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(sam.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap()
+    };
+
+    // Default -Q 0: both breakends emitted (with their equal tags).
+    let all = run(&[]);
+    assert!(all.contains("rlow") && all.contains("rhigh"), "default:\n{all}");
+    // -Q 20: rlow (equal 5) dropped; rhigh (equal 40) kept.
+    let filtered = run(&["-Q", "20"]);
+    assert!(
+        filtered.contains("rhigh") && !filtered.contains("rlow"),
+        "rlow (equal=5) should be dropped by -Q 20:\n{filtered}"
+    );
+}
+
+#[test]
 fn paired_end_read_suffix() {
     // For paired-end reads the mates are disambiguated by a /1 (first segment,
     // FLAG 0x40) or /2 (last segment, FLAG 0x80) suffix on the read name; an

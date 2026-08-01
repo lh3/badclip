@@ -52,10 +52,11 @@ Options:
 | `-r`, `--reference <FASTA>` | — | Reference FASTA (faidx-indexed), **required for CRAM**; ignored for BAM/SAM/PAF. |
 | `-s`, `--source <STR>` | `foo` | Dataset name, stamped on every record as a `source=` INFO tag. |
 | `-c`, `--min-clip <INT>` | `50` | Minimum clip length to report a clip breakend. |
-| `-q`, `--min-mapq <INT>` | `0` | Drop hits with mapping quality below this value. |
-| `-a`, `--min-aln-len <INT>` | `0` | Drop hits whose alignment block length (PAF col 11) is below this value. |
+| `-a`, `--min-aln-len <INT>` | `0` | Drop hits whose alignment block length (PAF col 11) is below this value (upfront hit filter). |
 | `-f`, `--flank <INT>` | `250` | Flanking read sequence extracted on each side of a breakend (alignment-file input only). |
 | `-e`, `--max-eseq <INT>` | `1000` | Maximum extracted window; longer windows omit `eseq` (alignment-file input only). |
+| `-Q`, `--min-equal <INT>` | `0` | **Post-filter:** drop breakends whose eseq quality (`equal`) is below this, to shrink downstream input. `0` keeps all; breakends without an `equal` value are always kept. |
+| `-q`, `--min-mapq <INT>` | `0` | **Post-filter:** drop output lines whose col-7 mapq (the join's larger, or a clip's mapq) is below this. Does not drop alignments upfront. |
 
 Examples:
 

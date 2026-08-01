@@ -49,11 +49,15 @@ pub struct ExtractOpts {
     pub flank: i64,
     /// Maximum extracted sequence length; longer windows omit `eseq` (BAM only).
     pub max_eseq: i64,
+    /// Drop breakends whose eseq quality (`equal`) is below this (0 = keep all).
+    pub min_equal: i64,
 }
 
-/// Whether a hit passes the mapq / alignment-length filters.
+/// Whether a hit passes the alignment-length filter (`-a`). Note `-q` is NOT
+/// applied here — it is a post-filter on the emitted line's col-7 mapq (see
+/// `emit_clip`/`emit_join`), so it never drops an alignment upfront.
 pub(crate) fn passes_filter(h: &Hit, opts: &ExtractOpts) -> bool {
-    h.mapq >= opts.min_mapq && h.alen >= opts.min_aln_len
+    h.alen >= opts.min_aln_len
 }
 
 impl Hit {
@@ -98,7 +102,12 @@ fn flip(ori: char) -> char {
 /// input); `eseq` (the substring `read_seq[start..end]`, on the original read
 /// strand) is appended only when the window is at most `opts.max_eseq` long.
 /// `equal` (the phred quality of that window) precedes `eseq` when per-base
-/// qualities are available. Returns `""` when `read_seq` is `None` (PAF).
+/// qualities are available. Returns `Some("")` when `read_seq` is `None` (PAF).
+///
+/// Returns `None` to signal the breakend should be dropped: when the computed
+/// `equal` is below `opts.min_equal` (`-Q`, default 0 = keep everything). This is
+/// only reachable for eseq-bearing breakends with base qualities — breakends
+/// without an `equal` value are always kept.
 fn eseq_info(
     read_seq: Option<&[u8]>,
     read_qual: Option<&[u8]>,
@@ -107,9 +116,9 @@ fn eseq_info(
     lo: i64,
     hi: i64,
     qdist: i64,
-) -> String {
+) -> Option<String> {
     let Some(seq) = read_seq else {
-        return String::new();
+        return Some(String::new());
     };
     let start = (lo - opts.flank).max(0);
     let end = (hi + opts.flank).min(qlen);
@@ -124,12 +133,17 @@ fn eseq_info(
             && e > s
             && e <= qual.len()
         {
-            info.push_str(&format!(";equal={}", eseq_qual(&qual[s..e])));
+            let equal = eseq_qual(&qual[s..e]);
+            // -Q: drop this breakend when its eseq quality is below the threshold.
+            if equal < opts.min_equal {
+                return None;
+            }
+            info.push_str(&format!(";equal={equal}"));
         }
         info.push_str(";eseq=");
         info.push_str(&String::from_utf8_lossy(&seq[s..e]));
     }
-    info
+    Some(info)
 }
 
 /// Phred quality of an eseq window: turn each base quality into an error rate,
@@ -278,7 +292,14 @@ fn emit_clip(
     read_seq: Option<&[u8]>,
     read_qual: Option<&[u8]>,
 ) -> io::Result<()> {
-    let eseq = eseq_info(read_seq, read_qual, opts, h.qlen, qpos, qpos, 0);
+    // -q post-filter: drop the line when its col-7 mapq (the clip's mapq) is below
+    // the threshold. The alignment itself is not dropped upfront.
+    if h.mapq < opts.min_mapq {
+        return Ok(());
+    }
+    let Some(eseq) = eseq_info(read_seq, read_qual, opts, h.qlen, qpos, qpos, 0) else {
+        return Ok(()); // dropped by -Q (low eseq quality)
+    };
     writeln!(
         out,
         "{}\t{}\t{}.\t.\t.\t{}\t{}\t{}\tsource={};idx={};n_aln={};aln_len={},0;qlen={},0,{};mapq={},0{}",
@@ -342,11 +363,18 @@ fn emit_join(
     }
 
     let mapq = y0.mapq.max(y1.mapq);
+    // -q post-filter: drop the line when its col-7 mapq (the join's max) is below
+    // the threshold. Neither alignment is dropped upfront.
+    if mapq < opts.min_mapq {
+        return Ok(());
+    }
     // The eseq window is read-forward (not affected by the output flip): it spans
     // the junction gap/overlap between the two hits, padded by `flank`.
     let lo = y0.qe.min(y1.qs);
     let hi = y0.qe.max(y1.qs);
-    let eseq = eseq_info(read_seq, read_qual, opts, y0.qlen, lo, hi, mid);
+    let Some(eseq) = eseq_info(read_seq, read_qual, opts, y0.qlen, lo, hi, mid) else {
+        return Ok(()); // dropped by -Q (low eseq quality)
+    };
     writeln!(
         out,
         "{}\t{}\t{}{}\t{}\t{}\t{}\t{}\t{}\tsource={};idx={};n_aln={};aln_len={},{};qlen={},{},{};mapq={},{}{}",

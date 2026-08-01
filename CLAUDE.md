@@ -160,11 +160,22 @@ stdin). Both paths build a `Vec<Hit>` per read and feed the shared `emit_read`.
   - noodles crates: util 0.82 (feature `alignment`) / sam 0.87 / core 0.20 /
     cram 0.96 / fasta 0.64.
 
-Within a read, hits are sorted by query start `qs`. Filtering is off by default:
-`-q` drops hits below a mapq (default 0) and `-a` drops hits whose alignment
-block length (PAF col 11, the `alen` field) is below a threshold (default 0).
-The clip threshold is `-c` (default 50). `-s` sets the `source=` dataset label
-(default `foo`), stamped on every record (alignment file and PAF).
+Within a read, hits are sorted by query start `qs`. Filtering is off by default.
+`-a` drops hits whose alignment block length (PAF col 11, the `alen` field) is
+below a threshold (default 0) — the one **upfront** hit filter (`passes_filter`),
+applied before breakends are formed. The clip threshold is `-c` (default 50).
+`-s` sets the `source=` dataset label (default `foo`), stamped on every record
+(alignment file and PAF).
+
+Two **post-filters** drop emitted lines (never alignments) — like their `merge`
+namesakes — so the per-read `idx`/`n_aln` counters are unchanged (dropped
+breakends are simply absent, so `idx` stays a stable per-breakend identifier):
+`-Q` (default 0 = keep all) drops breakends whose computed `equal` quality is
+below the threshold (breakends without an `equal` value — no `eseq`, no `QUAL`,
+or PAF — are always kept); `-q` (default 0) drops lines whose col-7 mapq (the
+join's `max`, or a clip's mapq) is below the threshold. Both shrink the output
+feeding downstream tools. In the `--help` listing `-q` is placed after `-Q` to
+reflect that it is a post-filter.
 
 **eseq/elen (alignment-file input only, not PAF).** With the read sequence
 available, each breakend also gets a window around the junction: read-forward
