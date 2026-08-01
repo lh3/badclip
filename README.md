@@ -203,6 +203,7 @@ Options:
 |--------|---------|-------------|
 | `-l`, `--margin <INT>` | `50` | Margin extending the protected junction interval on each side. |
 | `-s`, `--source <STR>` | off | Print **all** input lines and rewrite the `source=` tag to `STR` on survivors (kept/novel breakends). |
+| `-Q`, `--min-equal <INT>` | `20` | Drop lines whose eseq quality (`equal` tag) is below this (both modes). Lines without an `equal` tag are kept. |
 
 A record is **dropped** if it has no `eseq` tag, or if some ropebwt3 alignment's
 query interval `[qs,qe]` on the eseq contains the junction interval

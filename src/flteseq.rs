@@ -15,6 +15,9 @@
 //! and the survivors (kept/novel breakends) get their `source=` INFO tag
 //! rewritten to `STR`; dropped lines are printed verbatim with their original
 //! source. This tags novel calls distinctly for a downstream `merge`.
+//!
+//! `-Q` (default 20) additionally drops any line whose `equal` quality is below
+//! the threshold, in both modes (lines without an `equal` tag are kept).
 
 use std::io::{self, BufRead, Write};
 
@@ -24,7 +27,14 @@ use crate::io::open_reader;
 ///
 /// With `source = Some(str)`, print all input lines and rewrite the `source=`
 /// tag to `str` on survivors; with `None`, print only survivors, verbatim.
-pub fn run(extract_out: &str, rb3_paf: &str, l: i64, source: Option<&str>) -> io::Result<()> {
+/// Lines whose `equal` quality is below `min_equal` are dropped in either mode.
+pub fn run(
+    extract_out: &str,
+    rb3_paf: &str,
+    l: i64,
+    source: Option<&str>,
+    min_equal: i64,
+) -> io::Result<()> {
     let clip = open_reader(extract_out)?;
     let mut paf = open_reader(rb3_paf)?.lines();
     let stdout = io::stdout();
@@ -68,6 +78,14 @@ pub fn run(extract_out: &str, rb3_paf: &str, l: i64, source: Option<&str>) -> io
             {
                 protected = true;
             }
+        }
+
+        // -Q: drop low-quality-eseq breakends (in either mode). Done AFTER the
+        // PAF consumption above so the one-line lookahead stays in sync no matter
+        // how the PAF was built. A no-eseq line never reaches here (it has no
+        // `equal` tag anyway).
+        if line_equal(&line).is_some_and(|q| q < min_equal) {
+            continue;
         }
 
         let survivor = !protected;
@@ -148,6 +166,15 @@ fn protected_interval(line: &str, l: i64) -> Option<(String, i64, i64)> {
     let hi = (e0 + e1.abs() + l).min(eseq_len);
     // Name matches geteseq: readName_idx_leftFlank_rightFlank.
     Some((format!("{qname}_{idx}_{e0}_{e2}"), lo, hi))
+}
+
+/// The `equal` (eseq quality) tag of an `extract` line, if present.
+fn line_equal(line: &str) -> Option<i64> {
+    line.split('\t')
+        .nth(8)?
+        .split(';')
+        .find_map(|kv| kv.strip_prefix("equal="))
+        .and_then(|v| v.parse::<i64>().ok())
 }
 
 /// Parse a PAF line's 0-based query interval `(qs, qe)` (columns 3 and 4).

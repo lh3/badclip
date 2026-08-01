@@ -55,6 +55,11 @@ lookahead — no in-memory load. Either input may be `-` (stdin); missing input 
 help (via `main.rs::print_subcommand_help`, shared with `extract`/`geteseq`).
 Fixtures: `test/flt01.clip`, `test/flt01.rb3.paf`.
 
+`-Q` (default 20) additionally drops any line whose `equal` quality is below the
+threshold (in both modes; lines without an `equal` tag are kept). The check runs
+**after** the PAF lookahead consumes that line's entries, so the stream stays in
+sync regardless of how the PAF was built (`flteseq.rs::line_equal`).
+
 `-s STR` flips the mode: print **all** input lines and rewrite the `source=` INFO
 tag to `STR` on the survivors (kept/novel), leaving dropped lines (no `eseq`, or
 pangenome-explained) verbatim — tagging novel calls distinctly for a downstream

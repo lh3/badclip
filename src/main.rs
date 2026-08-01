@@ -83,6 +83,10 @@ enum Command {
         #[arg(short = 's', long = "source")]
         source: Option<String>,
 
+        /// Drop lines whose eseq quality (`equal` tag) is below this.
+        #[arg(short = 'Q', long = "min-equal", default_value_t = 20)]
+        min_equal: i64,
+
         /// `extract` output (gzip ok; "-" for stdin).
         extract_out: Option<String>,
 
@@ -174,13 +178,14 @@ fn main() -> ExitCode {
         Command::Flteseq {
             margin,
             source,
+            min_equal,
             extract_out,
             rb3_paf,
         } => {
             let (Some(extract_out), Some(rb3_paf)) = (extract_out, rb3_paf) else {
                 return print_subcommand_help("flteseq");
             };
-            flteseq::run(&extract_out, &rb3_paf, margin, source.as_deref())
+            flteseq::run(&extract_out, &rb3_paf, margin, source.as_deref(), min_equal)
         }
         Command::Merge {
             input,

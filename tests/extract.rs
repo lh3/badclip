@@ -561,3 +561,40 @@ chrG\t7\t>>\tchrH\t8\treadE\t60\t+\tsource=foo;idx=0;aln_len=1,1;qlen=1,0,1;mapq
 ";
     assert_eq!(String::from_utf8(out.stdout).unwrap(), expected);
 }
+
+#[test]
+fn flteseq_min_equal_filters() {
+    // -Q drops lines whose `equal` is below the threshold. Two survivors (empty
+    // PAF -> nothing protected); rlow has equal=5, rkeep equal=30.
+    let dir = env!("CARGO_TARGET_TMPDIR");
+    let clip = format!("{dir}/flteseq_q.clip");
+    let paf = format!("{dir}/flteseq_q_empty.paf");
+    std::fs::write(&paf, "").unwrap(); // empty PAF -> no line is "protected"
+    std::fs::write(
+        &clip,
+        "chrA\t1\t>.\t.\t.\trkeep\t60\t+\tsource=foo;idx=0;elen=250,0,250;equal=30;eseq=AAAA\n\
+         chrB\t2\t>.\t.\t.\trlow\t60\t+\tsource=foo;idx=0;elen=250,0,250;equal=5;eseq=CCCC\n",
+    )
+    .unwrap();
+
+    let run = |args: &[&str]| -> String {
+        let out = Command::new(env!("CARGO_BIN_EXE_badclip"))
+            .arg("flteseq")
+            .args(args)
+            .arg(&clip)
+            .arg(&paf)
+            .output()
+            .expect("failed to run badclip flteseq");
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap()
+    };
+
+    // Default -Q 20: both are survivors, but rlow (equal=5) is filtered out.
+    let got = run(&[]);
+    assert!(
+        got.contains("rkeep") && !got.contains("rlow"),
+        "rlow (equal=5) should be dropped by default -Q 20:\n{got}"
+    );
+    // -Q 0 keeps rlow too.
+    assert!(run(&["-Q", "0"]).contains("rlow"), "rlow should survive -Q 0");
+}
