@@ -321,6 +321,42 @@ fn no_qual_omits_equal() {
     );
 }
 
+#[test]
+fn paired_end_read_suffix() {
+    // For paired-end reads the mates are disambiguated by a /1 (first segment,
+    // FLAG 0x40) or /2 (last segment, FLAG 0x80) suffix on the read name; an
+    // unpaired read (FLAG without 0x1) keeps its bare name. Each 100M60S read has
+    // a 60 bp right clip (> default -c) so it emits one clip breakend.
+    let seq = "ACGT".repeat(40); // 160 bp = 100 aligned + 60 clipped
+    let sam = format!(
+        "@HD\tVN:1.6\tSO:unsorted\n@SQ\tSN:chrA\tLN:400\n\
+         mate\t65\tchrA\t1\t60\t100M60S\t=\t1\t0\t{seq}\t*\n\
+         mate\t129\tchrA\t1\t60\t100M60S\t=\t1\t0\t{seq}\t*\n\
+         solo\t0\tchrA\t1\t60\t100M60S\t*\t0\t0\t{seq}\t*\n"
+    );
+    let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
+        .arg("extract")
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn badclip");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(sam.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let names: Vec<String> = String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(|l| l.split('\t').nth(5).unwrap().to_string())
+        .collect();
+    assert_eq!(names, vec!["mate/1", "mate/2", "solo"]);
+}
+
 // --- BAM input ---
 
 // bam01.bam holds three reads: a 3-hit chimera (.../234884627/ccs -> 1 left clip
@@ -448,6 +484,22 @@ chrC\t9\t<.\t.\t.\tread2\t30\t-\tidx=0;aln_len=8,0;qlen=8,0,2;mapq=30,0;elen=8,0
     assert_eq!(
         run_geteseq_stdin(input.as_bytes()),
         ">read1_2_5_7\nACGTACGTACGTAAA\n"
+    );
+}
+
+#[test]
+fn geteseq_min_equal_filters() {
+    // -Q (default 20) drops records whose `equal` is below the threshold; records
+    // without an `equal` tag are kept.
+    let input = "\
+chrA\t1\t>.\t.\t.\trlow\t60\t+\tidx=0;elen=5,0,7;equal=10;eseq=AAAA
+chrB\t2\t>.\t.\t.\trhigh\t60\t+\tidx=0;elen=5,0,7;equal=30;eseq=CCCC
+chrC\t3\t>.\t.\t.\trnoq\t60\t+\tidx=0;elen=5,0,7;eseq=GGGG
+";
+    // Default -Q 20: rlow (equal=10) dropped; rhigh (equal=30) and rnoq (no equal) kept.
+    assert_eq!(
+        run_geteseq_stdin(input.as_bytes()),
+        ">rhigh_0_5_7\nCCCC\n>rnoq_0_5_7\nGGGG\n"
     );
 }
 

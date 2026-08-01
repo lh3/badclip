@@ -38,7 +38,9 @@ Filters `extract` output (TAB-delimited; `-` = stdin, gzip auto-detected; no
 input → print help) to FASTA. For each record with an `eseq` tag it emits
 `>readName_idx_L_R` (from
 the `idx` tag and `elen`'s `leftFlank`/`rightFlank`) followed by the `eseq` bases;
-records lacking `eseq` are skipped. Golden: `test/bam01.fa`.
+records lacking `eseq` are skipped. `-Q` (default 20) additionally drops records
+whose `equal` quality is below the threshold; records without an `equal` tag are
+kept. Golden: `test/bam01.fa`.
 
 ## `flteseq`
 
@@ -84,7 +86,9 @@ scaled), and the active-cluster list is bounded by `-A`.
 
 Flags mirror minisv's kept subset: `-c` min read count (4), `-s` min count on
 each strand (2), `-w` window bp (100), `-A` max active clusters (100), `-C` max
-reads compared per cluster (500).
+reads compared per cluster (500). `-Q` (default 20) drops input breakends whose
+`equal` quality is below the threshold before clustering (`parse_rec`); breakends
+without an `equal` tag are kept.
 
 A cluster is emitted only if `count ≥ -c` and each strand has `≥ -s` reads. The
 representative (`members[len/2]`) supplies the coordinate/`ori`/`strand` fields.
@@ -135,7 +139,9 @@ stdin). Both paths build a `Vec<Hit>` per read and feed the shared `emit_read`.
   on stdin too); records come as `Box<dyn sam::alignment::Record>` and are
   processed by the trait (one path for all three). Iterate primary records only
   (skip secondary/supplementary/unmapped). Each read's hits = the primary (from
-  its own CIGAR) + one per `SA:Z:` entry. No grouping needed, so sorted and
+  its own CIGAR) + one per `SA:Z:` entry. For paired-end reads the qname gets a
+  `/1` (first segment) or `/2` (last segment) suffix so the two mates are
+  distinct; unpaired reads keep the bare name. No grouping needed, so sorted and
   name-grouped files both work. Coordinates are computed to match PAF exactly
   (`span_from_ops`): `qspan/refspan/alen` from the CIGAR, `lead/tail` clips,
   `qlen=lead+qspan+tail`, `qs = +?lead:tail`, `qe=qs+qspan`, `ts=pos0`,

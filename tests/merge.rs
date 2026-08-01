@@ -75,6 +75,47 @@ fn merge_reads_stdin() {
     assert_eq!(String::from_utf8(output.stdout).unwrap(), want);
 }
 
+/// Run `badclip merge [args...] -` feeding `input` on stdin.
+fn run_merge_stdin(input: &str, args: &[&str]) -> String {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
+        .arg("merge")
+        .args(args)
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn badclip merge");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    String::from_utf8(out.stdout).unwrap()
+}
+
+#[test]
+fn merge_min_equal_filters() {
+    // Three clips clustering at chr1:1000; qlow has equal=5. -Q drops input
+    // breakends whose `equal` is below the threshold before clustering.
+    let input = "\
+chr1\t1000\t>.\t.\t.\tqfwd\t60\t+\tsource=foo;equal=30
+chr1\t1000\t>.\t.\t.\tqrev\t60\t-\tsource=foo;equal=30
+chr1\t1000\t>.\t.\t.\tqlow\t60\t+\tsource=foo;equal=5
+";
+    // Default -Q 20: qlow (equal=5) is dropped before clustering.
+    let got = run_merge_stdin(input, &["-c", "1", "-s", "1"]);
+    assert!(
+        got.contains("qfwd") && got.contains("qrev") && !got.contains("qlow"),
+        "qlow (equal=5) should be filtered by default -Q 20:\n{got}"
+    );
+    // -Q 0 keeps everything, so qlow appears.
+    let all = run_merge_stdin(input, &["-c", "1", "-s", "1", "-Q", "0"]);
+    assert!(all.contains("qlow"), "qlow should survive -Q 0:\n{all}");
+}
+
 #[test]
 fn merge_no_input_shows_help() {
     // No file -> print help and exit 2, not block on stdin (stdin is /dev/null).

@@ -65,6 +65,10 @@ enum Command {
 
     /// Convert `extract` output into a FASTA of extracted breakend sequences.
     Geteseq {
+        /// Drop records whose eseq quality (`equal` tag) is below this.
+        #[arg(short = 'Q', long = "min-equal", default_value_t = 20)]
+        min_equal: i64,
+
         /// Input `extract` output. Omit or use "-" to read from stdin.
         input: Option<String>,
     },
@@ -110,6 +114,10 @@ enum Command {
         /// Maximum reads compared per cluster (deterministic cap).
         #[arg(short = 'C', long = "max-check", default_value_t = 500)]
         max_check: i64,
+
+        /// Drop input breakends whose eseq quality (`equal` tag) is below this.
+        #[arg(short = 'Q', long = "min-equal", default_value_t = 20)]
+        min_equal: i64,
     },
 }
 
@@ -157,11 +165,11 @@ fn main() -> ExitCode {
                 max_eseq,
             })
         }
-        Command::Geteseq { input } => {
+        Command::Geteseq { min_equal, input } => {
             let Some(input) = input else {
                 return print_subcommand_help("geteseq");
             };
-            geteseq::run(&input)
+            geteseq::run(&input, min_equal)
         }
         Command::Flteseq {
             margin,
@@ -181,6 +189,7 @@ fn main() -> ExitCode {
             win_size,
             max_allele,
             max_check,
+            min_equal,
         } => {
             let Some(input) = input else {
                 return print_subcommand_help("merge");
@@ -192,6 +201,7 @@ fn main() -> ExitCode {
                 win_size,
                 max_allele,
                 max_check,
+                min_equal,
             })
         }
     };

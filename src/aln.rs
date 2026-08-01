@@ -110,7 +110,17 @@ fn emit_record(
     let Some(name) = record.name() else {
         return Ok(());
     };
-    let qname = name.to_string();
+    // For paired-end reads, disambiguate the two mates by appending `/1` (first
+    // segment) or `/2` (last segment). Unpaired reads (e.g. long reads) keep the
+    // bare name. The suffix flows into the SA-derived hits via `qname` too.
+    let mut qname = name.to_string();
+    if flags.is_segmented() {
+        if flags.is_first_segment() {
+            qname.push_str("/1");
+        } else if flags.is_last_segment() {
+            qname.push_str("/2");
+        }
+    }
     let pos0 = pos.get() as i64 - 1;
     let strand = strand_of(flags.is_reverse_complemented());
     let mapq = record

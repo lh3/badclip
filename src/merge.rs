@@ -35,6 +35,8 @@ pub struct MergeOpts {
     pub max_allele: i64,
     /// Maximum members compared per cluster (deterministic cap).
     pub max_check: i64,
+    /// Drop input breakends whose eseq quality (`equal` tag) is below this.
+    pub min_equal: i64,
 }
 
 /// One parsed `extract` breakend record. Every extract record is a breakend, so
@@ -60,14 +62,24 @@ struct Cluster {
 }
 
 /// Parse one `extract` line into a `Rec`; `None` for malformed lines (`< 9`
-/// fields), consistent with the other subcommands.
-fn parse_rec(line: &str) -> Option<Rec> {
+/// fields) or lines whose `equal` quality is below `min_equal` (lines lacking an
+/// `equal` tag are kept), consistent with the other subcommands.
+fn parse_rec(line: &str, min_equal: i64) -> Option<Rec> {
     let f: Vec<&str> = line.split('\t').collect();
     if f.len() < 9 {
         return None;
     }
     let ob = f[2].as_bytes();
     if ob.len() < 2 {
+        return None;
+    }
+    // Drop low-quality-eseq breakends; keep those without an `equal` tag.
+    if let Some(q) = f[8]
+        .split(';')
+        .find_map(|kv| kv.strip_prefix("equal="))
+        .and_then(|v| v.parse::<i64>().ok())
+        && q < min_equal
+    {
         return None;
     }
     Some(Rec {
@@ -205,7 +217,7 @@ pub fn run(opts: &MergeOpts) -> io::Result<()> {
     // deterministic.
     let mut recs: Vec<Rec> = Vec::new();
     for line in open_reader(&opts.input)?.lines() {
-        if let Some(r) = parse_rec(&line?) {
+        if let Some(r) = parse_rec(&line?, opts.min_equal) {
             recs.push(r);
         }
     }

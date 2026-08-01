@@ -72,7 +72,9 @@ minimap2 … | badclip extract --paf -        # PAF from stdin
 - **Alignment file (SAM/BAM/CRAM)**: the container format is auto-detected. A
   read's chimeric hits are read from the primary alignment's `SA:Z:` tag;
   secondary/supplementary/unmapped records are ignored. Works on both
-  coordinate-sorted and name-grouped files (no grouping required). **CRAM** needs
+  coordinate-sorted and name-grouped files (no grouping required). Paired-end
+  reads get a `/1` or `/2` suffix on the read name (first/last segment) so the
+  mates stay distinct; unpaired reads keep the bare name. **CRAM** needs
   `-r ref.fa` (with `ref.fa.fai`) to decode read sequences; `-r` is ignored for
   BAM/SAM.
 - **PAF**: alignments are grouped by read name (as produced directly by
@@ -155,10 +157,16 @@ orientation (not flipped with the output):
 Convert `extract` output into a FASTA of the extracted breakend sequences.
 
 ```sh
-badclip geteseq [INPUT]
+badclip geteseq [OPTIONS] [INPUT]
 ```
 
 - `INPUT` — `extract` output (gzip ok; `-` or omit for stdin).
+
+Options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-Q`, `--min-equal <INT>` | `20` | Drop records whose eseq quality (`equal` tag) is below this. Records without an `equal` tag are kept. |
 
 For each record that has an `eseq` tag, it writes one FASTA entry named
 `readName_idx_leftFlank_rightFlank` (from the `idx` and `elen` tags) with the
@@ -239,6 +247,7 @@ Options:
 | `-w`, `--win-size <INT>` | `100` | Clustering window (bp). |
 | `-A`, `--max-allele <INT>` | `100` | Cap on simultaneously-open clusters. |
 | `-C`, `--max-check <INT>` | `500` | Maximum reads compared per cluster. |
+| `-Q`, `--min-equal <INT>` | `20` | Drop input breakends whose eseq quality (`equal` tag) is below this before clustering. Breakends without an `equal` tag are kept. |
 
 Breakends within `-w` bp on both endpoints (with `><`/`<>` treated as the same
 inversion) are grouped; a group is reported only if it has at least `-c` reads
