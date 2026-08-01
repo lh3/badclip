@@ -38,6 +38,10 @@ enum Command {
         #[arg(short = 'r', long = "reference")]
         reference: Option<String>,
 
+        /// File listing ALT contig names; reads/SA hits on them are excluded.
+        #[arg(long = "alt", value_name = "FILE")]
+        alt: Option<String>,
+
         /// Dataset name, emitted as a `source=` INFO tag on every record.
         #[arg(short = 's', long = "source", default_value_t = String::from("foo"))]
         source: String,
@@ -153,6 +157,7 @@ fn main() -> ExitCode {
             input,
             paf,
             reference,
+            alt,
             source,
             min_clip,
             min_mapq,
@@ -170,6 +175,7 @@ fn main() -> ExitCode {
                 input,
                 paf,
                 reference,
+                alt,
                 source,
                 min_clip,
                 min_mapq,

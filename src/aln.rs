@@ -18,6 +18,7 @@
 //! supplementary hits, because minimap2's `SA` CIGAR is collapsed (it merges
 //! small indels); the primary hit uses its full CIGAR and matches PAF.
 
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
 
@@ -29,6 +30,7 @@ use noodles_sam::alignment::record::data::field::{Tag, Value};
 use noodles_util::alignment;
 
 use crate::extract::{ExtractOpts, emit_read, passes_filter};
+use crate::io::open_reader;
 use crate::paf::{Hit, Strand};
 
 /// Read an alignment file from `input` (`"-"` = stdin), autodetecting
@@ -64,10 +66,29 @@ pub fn run(input: &str, opts: &ExtractOpts, out: &mut impl Write) -> io::Result<
         .map(|k| k.to_string())
         .collect();
 
+    let alt = load_alt(opts.alt.as_deref())?;
+
     for result in reader.records(&header) {
-        emit_record(&*result?, &header, &names, opts, out)?;
+        emit_record(&*result?, &header, &names, &alt, opts, out)?;
     }
     Ok(())
+}
+
+/// Load the set of ALT contig names from `--alt` (gzip ok). Each line's first
+/// whitespace-delimited token is taken, so both a plain one-name-per-line list
+/// and a bwa-kit `.alt` file (SAM lines whose QNAME is the ALT contig) work.
+/// Empty when no file is given.
+fn load_alt(path: Option<&str>) -> io::Result<HashSet<String>> {
+    let mut set = HashSet::new();
+    let Some(path) = path else {
+        return Ok(set);
+    };
+    for line in open_reader(path)?.lines() {
+        if let Some(name) = line?.split_whitespace().next() {
+            set.insert(name.to_string());
+        }
+    }
+    Ok(set)
 }
 
 /// Build a CRAM reference repository from a faidx-indexed FASTA (`ref` + `ref.fai`).
@@ -86,10 +107,15 @@ fn reference_repository(reference: &str) -> io::Result<fasta::Repository> {
 }
 
 /// Turn one alignment record into breakends via the shared [`emit_read`].
+///
+/// `alt` is the set of ALT contig names (`--alt`): a read whose primary hit lands
+/// on an ALT contig is skipped entirely, and ALT hits in the `SA` tag are dropped
+/// before clips/joins are formed.
 fn emit_record(
     record: &dyn Record,
     header: &Header,
     names: &[String],
+    alt: &HashSet<String>,
     opts: &ExtractOpts,
     out: &mut impl Write,
 ) -> io::Result<()> {
@@ -104,6 +130,10 @@ fn emit_record(
     let Some(ctg) = names.get(ref_id) else {
         return Ok(());
     };
+    // Ignore reads whose primary hit lands on an ALT contig.
+    if alt.contains(ctg.as_str()) {
+        return Ok(());
+    }
     let Some(pos) = record.alignment_start().transpose()? else {
         return Ok(());
     };
@@ -138,10 +168,13 @@ fn emit_record(
     let qlen = primary.qlen;
     let mut hits = vec![primary];
 
-    // Supplementary hits, from the SA:Z: tag.
+    // Supplementary hits, from the SA:Z: tag. Skip supplementary hits on ALT
+    // contigs so they never form clips/joins with the (non-ALT) primary.
     if let Some(sa) = sa_tag(record)? {
         for entry in sa.split(';') {
-            if let Some(hit) = parse_sa_entry(&qname, entry) {
+            if let Some(hit) = parse_sa_entry(&qname, entry)
+                && !alt.contains(hit.ctg.as_str())
+            {
                 hits.push(hit);
             }
         }

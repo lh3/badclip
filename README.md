@@ -50,6 +50,7 @@ Options:
 |--------|---------|-------------|
 | `--paf` | off | Read PAF (optionally gzip'd) instead of an alignment file. |
 | `-r`, `--reference <FASTA>` | — | Reference FASTA (faidx-indexed), **required for CRAM**; ignored for BAM/SAM/PAF. |
+| `--alt <FILE>` | — | File listing ALT contig names (alignment-file input). Reads whose primary maps to an ALT contig are skipped, and ALT hits in the `SA` tag are dropped before clips/joins. |
 | `-s`, `--source <STR>` | `foo` | Dataset name, stamped on every record as a `source=` INFO tag. |
 | `-c`, `--min-clip <INT>` | `50` | Minimum clip length to report a clip breakend. |
 | `-a`, `--min-aln-len <INT>` | `0` | Drop hits whose alignment block length (PAF col 11) is below this value (upfront hit filter). |

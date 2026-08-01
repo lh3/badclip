@@ -374,6 +374,61 @@ fn extract_min_mapq_is_a_col7_postfilter() {
 }
 
 #[test]
+fn extract_alt_contigs() {
+    // --alt lists ALT contigs. A read whose primary lands on an ALT contig is
+    // dropped; an ALT hit in the SA tag is filtered before clips/joins form.
+    // `altprim` maps to chrAlt; `normal` maps to chrA with an SA to chrAlt.
+    let s160 = "ACGT".repeat(40);
+    let q160 = "I".repeat(160);
+    let s200 = "ACGT".repeat(50);
+    let q200 = "I".repeat(200);
+    let sam = format!(
+        "@HD\tVN:1.6\tSO:unsorted\n@SQ\tSN:chrA\tLN:400\n@SQ\tSN:chrAlt\tLN:400\n\
+         altprim\t0\tchrAlt\t1\t60\t100M60S\t*\t0\t0\t{s160}\t{q160}\n\
+         normal\t0\tchrA\t1\t60\t100M100S\t*\t0\t0\t{s200}\t{q200}\tSA:Z:chrAlt,1,+,100S100M,60,0\n"
+    );
+    let alt_path = format!("{}/alt_contigs.txt", env!("CARGO_TARGET_TMPDIR"));
+    std::fs::write(&alt_path, "chrAlt\n").unwrap();
+
+    let run = |args: &[&str]| -> String {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
+            .arg("extract")
+            .args(args)
+            .arg("-")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn badclip");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(sam.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap()
+    };
+
+    // Without --alt: altprim clips on chrAlt, normal joins chrA<->chrAlt.
+    let plain = run(&[]);
+    assert!(plain.contains("altprim") && plain.contains("chrAlt"), "plain:\n{plain}");
+
+    // With --alt: altprim (primary on ALT) is gone; normal's SA-to-ALT is dropped,
+    // leaving only a chrA clip -> chrAlt appears nowhere.
+    let filtered = run(&["--alt", &alt_path]);
+    assert!(
+        !filtered.contains("chrAlt") && !filtered.contains("altprim"),
+        "ALT reads/hits should be excluded:\n{filtered}"
+    );
+    // `normal` survives as a plain clip on chrA (a `>.` clip, not a join).
+    let cols: Vec<&str> = filtered.trim_end().split('\t').collect();
+    assert_eq!(cols[0], "chrA");
+    assert_eq!(cols[2], ">.");
+    assert_eq!(cols[5], "normal");
+}
+
+#[test]
 fn extract_min_equal_drops_low_quality() {
     // -Q (default 0 = keep all) drops breakends whose computed `equal` is below
     // the threshold, to shrink downstream input. rlow's window is all phred 5

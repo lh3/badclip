@@ -37,6 +37,8 @@ pub struct ExtractOpts {
     pub paf: bool,
     /// Reference FASTA (faidx-indexed), required for CRAM input.
     pub reference: Option<String>,
+    /// File listing ALT contig names (alignment-file input); `None` = none.
+    pub alt: Option<String>,
     /// Dataset name, emitted as the `source=` INFO tag on every record.
     pub source: String,
     /// Minimum clip length to report a clip breakend.
