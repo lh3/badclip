@@ -37,8 +37,11 @@ pub struct MergeOpts {
     pub max_check: i64,
     /// Drop input breakends whose eseq quality (`equal` tag) is below this.
     pub min_equal: i64,
-    /// Drop input breakends whose col-7 mapq is below this.
+    /// Drop input breakends whose col-7 mapq (join `max`, clip mapq) is below this.
     pub min_mapq: i64,
+    /// Drop input **join** breakends whose smaller per-hit mapq is below this
+    /// (no effect on clips).
+    pub min_mapq_min: i64,
 }
 
 /// One parsed `extract` breakend record. Every extract record is a breakend, so
@@ -64,10 +67,11 @@ struct Cluster {
 }
 
 /// Parse one `extract` line into a `Rec`; `None` for malformed lines (`< 9`
-/// fields), lines whose col-7 mapq is below `min_mapq`, or lines whose `equal`
-/// quality is below `min_equal` (lines lacking an `equal` tag are kept),
-/// consistent with the other subcommands.
-fn parse_rec(line: &str, min_equal: i64, min_mapq: i64) -> Option<Rec> {
+/// fields), lines whose col-7 mapq is below `min_mapq`, lines whose `equal`
+/// quality is below `min_equal` (lines lacking an `equal` tag are kept), or
+/// **join** lines whose smaller per-hit mapq (from the `mapq=` INFO tag) is below
+/// `min_mapq_min` (clips are exempt), consistent with the other subcommands.
+fn parse_rec(line: &str, min_equal: i64, min_mapq: i64, min_mapq_min: i64) -> Option<Rec> {
     let f: Vec<&str> = line.split('\t').collect();
     if f.len() < 9 {
         return None;
@@ -80,6 +84,20 @@ fn parse_rec(line: &str, min_equal: i64, min_mapq: i64) -> Option<Rec> {
     // the threshold.
     let mapq: i64 = f[6].parse().ok()?;
     if mapq < min_mapq {
+        return None;
+    }
+    // `.` (a clip's missing mate) fails to parse -> None, the sentinel `same_sv`
+    // wants; also gates the -p clip exemption below.
+    let pos2 = f[4].parse::<i64>().ok();
+    // -p: drop join breakends whose *smaller* per-hit mapq is below the threshold.
+    // Clips (pos2 absent) are exempt: a clip's mapq2 is 0, so its min is always 0.
+    if pos2.is_some()
+        && let Some(m) = f[8]
+            .split(';')
+            .find_map(|kv| kv.strip_prefix("mapq="))
+            .and_then(|v| v.split(',').filter_map(|x| x.parse::<i64>().ok()).min())
+        && m < min_mapq_min
+    {
         return None;
     }
     // Drop low-quality-eseq breakends; keep those without an `equal` tag.
@@ -96,9 +114,7 @@ fn parse_rec(line: &str, min_equal: i64, min_mapq: i64) -> Option<Rec> {
         pos: f[1].parse().ok()?,
         ori: [ob[0], ob[1]],
         ctg2: f[3].to_string(),
-        // "." (a clip's missing mate) fails to parse -> None, which is exactly
-        // the sentinel we want (see `same_sv`).
-        pos2: f[4].parse().ok(),
+        pos2,
         name: f[5].to_string(),
         mapq,
         strand: f[7].bytes().next()?,
@@ -226,7 +242,7 @@ pub fn run(opts: &MergeOpts) -> io::Result<()> {
     // deterministic.
     let mut recs: Vec<Rec> = Vec::new();
     for line in open_reader(&opts.input)?.lines() {
-        if let Some(r) = parse_rec(&line?, opts.min_equal, opts.min_mapq) {
+        if let Some(r) = parse_rec(&line?, opts.min_equal, opts.min_mapq, opts.min_mapq_min) {
             recs.push(r);
         }
     }

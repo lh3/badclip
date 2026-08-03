@@ -108,11 +108,11 @@ enum Command {
         input: Option<String>,
 
         /// Minimum read count to emit a call.
-        #[arg(short = 'c', long = "min-cnt", default_value_t = 4)]
+        #[arg(short = 'c', long = "min-cnt", default_value_t = 3)]
         min_cnt: i64,
 
         /// Minimum read count on each strand.
-        #[arg(short = 's', long = "min-cnt-strand", default_value_t = 2)]
+        #[arg(short = 's', long = "min-cnt-strand", default_value_t = 1)]
         min_cnt_strand: i64,
 
         /// Clustering window size (bp).
@@ -134,6 +134,11 @@ enum Command {
         /// Drop input breakends whose col-7 mapq is below this.
         #[arg(short = 'q', long = "min-mapq", default_value_t = 0)]
         min_mapq: i64,
+
+        /// Drop input join breakends whose smaller per-hit mapq is below this
+        /// (no effect on clips).
+        #[arg(short = 'p', long = "min-mapq-min", default_value_t = 10)]
+        min_mapq_min: i64,
     },
 }
 
@@ -212,6 +217,7 @@ fn main() -> ExitCode {
             max_check,
             min_equal,
             min_mapq,
+            min_mapq_min,
         } => {
             let Some(input) = input else {
                 return print_subcommand_help("merge");
@@ -225,6 +231,7 @@ fn main() -> ExitCode {
                 max_check,
                 min_equal,
                 min_mapq,
+                min_mapq_min,
             })
         }
     };

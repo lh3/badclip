@@ -89,12 +89,17 @@ alone). Per-cluster comparisons are capped at `-C` members (a deterministic cap
 replacing minisv's reservoir sampling — deep-cluster counts are capped, not
 scaled), and the active-cluster list is bounded by `-A`.
 
-Flags mirror minisv's kept subset: `-c` min read count (4), `-s` min count on
-each strand (2), `-w` window bp (100), `-A` max active clusters (100), `-C` max
+Flags mirror minisv's kept subset: `-c` min read count (3), `-s` min count on
+each strand (1), `-w` window bp (100), `-A` max active clusters (100), `-C` max
 reads compared per cluster (500). `-Q` (default 20) drops input breakends whose
 `equal` quality is below the threshold before clustering (`parse_rec`); breakends
 without an `equal` tag are kept. `-q` (default 0) drops input breakends whose
-col-7 mapq (the join's `max`, or a clip's mapq) is below the threshold.
+col-7 mapq (the join's `max`, or a clip's mapq) is below the threshold. `-p`
+(default 10) drops input **join** breakends whose *smaller* per-hit mapq (the
+`min` of the `mapq=` INFO pair) is below the threshold; clips are exempt (their
+`mapq2` is 0, so their min would always be 0), so `-p` never affects a clip
+line — `-q`/`-p` are the max/min poles of the same per-hit mapq pair
+(`parse_rec`).
 
 A cluster is emitted only if `count ≥ -c` and each strand has `≥ -s` reads. The
 representative (`members[len/2]`) supplies the coordinate/`ori`/`strand` fields.

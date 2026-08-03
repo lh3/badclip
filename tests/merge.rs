@@ -30,10 +30,10 @@ fn run_merge(args: &[&str]) -> String {
 
 #[test]
 fn merge_basic() {
-    // Default thresholds (-c 4 -s 2): the >> join cluster (A), the clip cluster
+    // Default thresholds (-c 3 -s 1): the >> join cluster (A), the clip cluster
     // (C), and the inversion-pair join cluster (D, with count_fr/count_rf) all
-    // pass; the all-`+` B cluster fails the per-strand filter, and the singletons
-    // (readSolo, the 2-read E cluster) fail min_cnt.
+    // pass; the all-`+` B cluster fails the per-strand filter (0 reads on `-`),
+    // and the singleton readSolo and the 2-read E cluster fail min_cnt.
     let got = run_merge(&[test_dir().join("merge01.clip").to_str().unwrap()]);
     let want = std::fs::read_to_string(test_dir().join("merge01.expected")).unwrap();
     assert_eq!(got, want);
@@ -134,6 +134,33 @@ chr1\t1000\t>.\t.\t.\tqlo\t5\t+\tsource=foo
     // Default -q 0 keeps everything, so qlo appears.
     let all = run_merge_stdin(input, &["-c", "1", "-s", "1"]);
     assert!(all.contains("qlo"), "qlo should survive default -q 0:\n{all}");
+}
+
+#[test]
+fn merge_min_mapq_min_filters() {
+    // Two joins and one clip clustering at chr1:1000->chr2:2000. jlo's `mapq=`
+    // pair has a smaller value of 3; jhi's is 40. -p drops join breakends whose
+    // *smaller* per-hit mapq is below the threshold, but never a clip (mapq2=0).
+    let input = "\
+chr1\t1000\t>>\tchr2\t2000\tjhi\t60\t+\tsource=foo;mapq=60,40
+chr1\t1000\t>>\tchr2\t2000\tjhi2\t60\t-\tsource=foo;mapq=40,60
+chr1\t1000\t>>\tchr2\t2000\tjlo\t60\t+\tsource=foo;mapq=60,3
+chr1\t3000\t>.\t.\t.\tcliplo\t60\t+\tsource=foo;mapq=3,0
+chr1\t3000\t>.\t.\t.\tcliplo2\t60\t-\tsource=foo;mapq=3,0
+";
+    // -p 20 drops jlo (min pair 3); jhi/jhi2 remain and the clip is exempt.
+    let got = run_merge_stdin(input, &["-c", "1", "-s", "1", "-p", "20"]);
+    assert!(
+        got.contains("jhi") && got.contains("jhi2") && !got.contains("jlo"),
+        "jlo (min pair mapq 3) should be filtered by -p 20:\n{got}"
+    );
+    assert!(
+        got.contains("cliplo"),
+        "a clip (mapq2=0) must be exempt from -p:\n{got}"
+    );
+    // -p 0 keeps every join, so jlo appears.
+    let all = run_merge_stdin(input, &["-c", "1", "-s", "1", "-p", "0"]);
+    assert!(all.contains("jlo"), "jlo should survive -p 0:\n{all}");
 }
 
 #[test]
