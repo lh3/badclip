@@ -53,8 +53,13 @@ struct Rec {
     ori: [u8; 2],      // col 2, two chars each b'>'/b'<'/b'.'
     ctg2: String,      // col 3 ("." for a clip)
     pos2: Option<i64>, // col 4 (None when ".")
-    mapq: i64,         // col 6
-    strand: u8,        // col 7, b'+' or b'-'
+    // Per-hit mapqs from the `mapq=` INFO tag, already aligned to the output
+    // endpoints (mapq1 -> ctg1:pos1, mapq2 -> ctg2:pos2; extract swaps them on
+    // flip). `mapq2` is 0 for a clip. Fall back to (col-7 mapq, 0) if the tag is
+    // absent. Used for the per-end `avg_mapq=q1,q2`.
+    mapq1: i64,
+    mapq2: i64,
+    strand: u8, // col 7, b'+' or b'-'
     name: String,      // col 5, qname
     source: String,    // `source=` INFO tag (col 8); "." if absent
 }
@@ -89,15 +94,20 @@ fn parse_rec(line: &str, min_equal: i64, min_mapq: i64, min_mapq_min: i64) -> Op
     // `.` (a clip's missing mate) fails to parse -> None, the sentinel `same_sv`
     // wants; also gates the -p clip exemption below.
     let pos2 = f[4].parse::<i64>().ok();
+    // Per-hit mapq pair from the `mapq=` INFO tag (already aligned to the output
+    // endpoints). Fall back to (col-7 mapq, 0) when the tag is absent — col-7 is
+    // the clip's own mapq, so this matches a clip's (mapq1, 0).
+    let (mapq1, mapq2) = f[8]
+        .split(';')
+        .find_map(|kv| kv.strip_prefix("mapq="))
+        .and_then(|v| {
+            let mut it = v.split(',');
+            Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
+        })
+        .unwrap_or((mapq, 0));
     // -p: drop join breakends whose *smaller* per-hit mapq is below the threshold.
     // Clips (pos2 absent) are exempt: a clip's mapq2 is 0, so its min is always 0.
-    if pos2.is_some()
-        && let Some(m) = f[8]
-            .split(';')
-            .find_map(|kv| kv.strip_prefix("mapq="))
-            .and_then(|v| v.split(',').filter_map(|x| x.parse::<i64>().ok()).min())
-        && m < min_mapq_min
-    {
+    if pos2.is_some() && mapq1.min(mapq2) < min_mapq_min {
         return None;
     }
     // Drop low-quality-eseq breakends; keep those without an `equal` tag.
@@ -116,7 +126,8 @@ fn parse_rec(line: &str, min_equal: i64, min_mapq: i64, min_mapq_min: i64) -> Op
         ctg2: f[3].to_string(),
         pos2,
         name: f[5].to_string(),
-        mapq,
+        mapq1,
+        mapq2,
         strand: f[7].bytes().next()?,
         // Dataset label from the `source=` INFO tag (order-independent); "." when
         // absent, though extract always emits it.
@@ -166,7 +177,12 @@ fn write_sv(out: &mut impl Write, cl: &Cluster, opts: &MergeOpts) -> io::Result<
     }
     let v = &s[s.len() / 2]; // representative (upper-middle; stable under sort)
 
-    let mut mapq_sum = 0i64;
+    // Per-end mapq sums. mapq1 tracks ctg1:pos1, mapq2 tracks ctg2:pos2; both are
+    // already output-endpoint-aligned per record (extract swaps the pair on flip),
+    // and `same_sv` clusters only records with matching pos1 *and* pos2, so every
+    // member's end1/end2 sit at the same loci — including the "><"/"<>" inversion
+    // pair, whose coordinate-based canonicalization keeps end1 = the lower locus.
+    let (mut mapq1_sum, mut mapq2_sum) = (0i64, 0i64);
     let mut cnt = [0i64, 0i64]; // [+, -] cluster totals (for the filter)
     let (mut fr, mut rf) = (0i64, 0i64); // ori "><" and "<>"
     // Per-source [+, -] counts and read-name lists; BTreeMap keeps sources
@@ -174,7 +190,8 @@ fn write_sv(out: &mut impl Write, cl: &Cluster, opts: &MergeOpts) -> io::Result<
     let mut per_source: BTreeMap<&str, [i64; 2]> = BTreeMap::new();
     let mut reads_by_source: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for m in s {
-        mapq_sum += m.mapq;
+        mapq1_sum += m.mapq1;
+        mapq2_sum += m.mapq2;
         let strand_ix = if m.strand == b'+' { 0 } else { 1 };
         cnt[strand_ix] += 1;
         per_source.entry(&m.source).or_default()[strand_ix] += 1;
@@ -194,8 +211,11 @@ fn write_sv(out: &mut impl Write, cl: &Cluster, opts: &MergeOpts) -> io::Result<
         return Ok(());
     }
 
-    // f64::round is half-away-from-zero, matching JS toFixed(0).
-    let avg_mapq = (mapq_sum as f64 / s.len() as f64).round() as i64;
+    // f64::round is half-away-from-zero, matching JS toFixed(0). Per-end: q1 for
+    // the ctg1:pos1 side, q2 for the ctg2:pos2 side (q2 is 0 for a clip cluster).
+    let n = s.len() as f64;
+    let q1 = (mapq1_sum as f64 / n).round() as i64;
+    let q2 = (mapq2_sum as f64 / n).round() as i64;
 
     // count=src:f,r|... over sources present in the cluster, alphabetical.
     let count = per_source
@@ -203,7 +223,7 @@ fn write_sv(out: &mut impl Write, cl: &Cluster, opts: &MergeOpts) -> io::Result<
         .map(|(src, [f, r])| format!("{src}:{f},{r}"))
         .collect::<Vec<_>>()
         .join("|");
-    let mut info = format!("avg_mapq={avg_mapq};count={count}");
+    let mut info = format!("avg_mapq={q1},{q2};count={count}");
     if fr + rf > 0 {
         info.push_str(&format!(";count_fr={fr};count_rf={rf}"));
         if fr * rf == 0 && v.ctg == v.ctg2 {

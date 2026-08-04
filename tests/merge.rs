@@ -164,6 +164,37 @@ chr1\t3000\t>.\t.\t.\tcliplo2\t60\t-\tsource=foo;mapq=3,0
 }
 
 #[test]
+fn merge_avg_mapq_per_end() {
+    // avg_mapq=q1,q2 averages the `mapq=` pair per output endpoint: q1 on the
+    // ctg1:pos1 side, q2 on the ctg2:pos2 side. The cluster mixes ">< " and "<>"
+    // (an inversion pair) with asymmetric per-hit mapqs — since the INFO pair is
+    // already endpoint-aligned, the "<>" member must NOT swap sides.
+    let input = "\
+chr1\t1000\t><\tchr1\t5000\tri1\t60\t+\tsource=foo;mapq=60,20
+chr1\t1005\t<>\tchr1\t5005\tri2\t62\t-\tsource=foo;mapq=62,22
+chr1\t1010\t><\tchr1\t4995\tri3\t58\t+\tsource=foo;mapq=58,18
+";
+    // q1 = mean(60,62,58) = 60; q2 = mean(20,22,18) = 20.
+    let got = run_merge_stdin(input, &["-p", "0"]);
+    assert!(
+        got.contains("avg_mapq=60,20"),
+        "per-end avg_mapq should be 60,20 (endpoint-aligned across the inversion pair):\n{got}"
+    );
+
+    // A clip cluster reports q2=0 (no second end).
+    let clips = "\
+chr1\t2000\t>.\t.\t.\trc1\t40\t+\tsource=foo;mapq=40,0
+chr1\t2005\t>.\t.\t.\trc2\t20\t-\tsource=foo;mapq=20,0
+chr1\t2010\t>.\t.\t.\trc3\t60\t+\tsource=foo;mapq=60,0
+";
+    let cg = run_merge_stdin(clips, &[]);
+    assert!(
+        cg.contains("avg_mapq=40,0"),
+        "clip cluster avg_mapq should be 40,0:\n{cg}"
+    );
+}
+
+#[test]
 fn merge_no_input_shows_help() {
     // No file -> print help and exit 2, not block on stdin (stdin is /dev/null).
     let output = Command::new(env!("CARGO_BIN_EXE_badclip"))

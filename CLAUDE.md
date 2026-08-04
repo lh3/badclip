@@ -111,7 +111,10 @@ ctg1  pos1  ori  ctg2  pos2  .  count  strand  INFO
 
 (`.` in the qname slot, cluster size in the mapq slot; `pos2`=`.` for a clip.)
 `INFO` is merge-derived only (the representative's `idx`/`aln_len`/`qlen`/`mapq`/
-`elen`/`eseq` are **not** carried through): `avg_mapq=M;count=<src:f,r|...>` then,
+`elen`/`eseq` are **not** carried through): `avg_mapq=q1,q2;count=<src:f,r|...>`
+(`q1` = mean per-hit mapq on the `ctg1:pos1` side, `q2` on the `ctg2:pos2` side
+from each member's `mapq=` INFO pair — already output-endpoint-aligned, so
+inversion `><`/`<>` members average correctly; `q2=0` for a clip cluster) then,
 when any member is `><`/`<>`, `;count_fr=A;count_rf=B` and `;foldback` if `A*B==0
 && ctg1==ctg2`, and finally `;reads=<src:name,...|...>`. `count=` lists each
 `source=` observed in the cluster (from the reads' `source=` tag) with its
