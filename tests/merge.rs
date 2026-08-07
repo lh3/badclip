@@ -195,6 +195,58 @@ chr1\t2010\t>.\t.\t.\trc3\t60\t+\tsource=foo;mapq=60,0
 }
 
 #[test]
+fn merge_sample_merge() {
+    // -m: input is combined `merge` output (one line per sample). Two samples'
+    // join calls cluster at chr1; two inversion-pair calls cluster at chr2.
+    // Counts come from the `count=` tag (summed over sources), mapq from
+    // `avg_mapq=`; output has count=F,R, no per-source breakdown, no reads=.
+    let input = "\
+chr1\t1000\t>>\tchr1\t5000\t.\t6\t+\tavg_mapq=60,50;count=sA:2,4
+chr1\t1010\t>>\tchr1\t5008\t.\t5\t-\tavg_mapq=40,30;count=sB:3,2
+chr2\t2000\t><\tchr2\t2800\t.\t6\t+\tavg_mapq=60,60;count=sA:3,3;count_fr=6;count_rf=0
+chr2\t2005\t<>\tchr2\t2795\t.\t6\t-\tavg_mapq=60,60;count=sB:2,4;count_fr=2;count_rf=4
+";
+    let got = run_merge_stdin(input, &["-m"]);
+    // chr1: rep = 2nd member (pos 1010); q1=mean(60,40)=50, q2=mean(50,30)=40;
+    // fwd=2+3=5, rev=4+2=6; col-7 = 2 distinct sources (sA, sB).
+    assert!(
+        got.contains("chr1\t1010\t>>\tchr1\t5008\t.\t2\t-\tavg_mapq=50,40;count=5,6"),
+        "chr1 sample-merge line wrong:\n{got}"
+    );
+    // chr2 inversion: count_fr/count_rf summed from input (6+2, 0+4); fr*rf != 0
+    // so no foldback despite ctg1==ctg2; col-7 = 2 sources.
+    assert!(
+        got.contains("chr2\t2005\t<>\tchr2\t2795\t.\t2\t-\tavg_mapq=60,60;count=5,7;count_fr=8;count_rf=4"),
+        "chr2 inversion sample-merge line wrong:\n{got}"
+    );
+    assert!(!got.contains("foldback"), "unexpected foldback (fr*rf != 0):\n{got}");
+    assert!(!got.contains("reads="), "-m output must not carry a reads= tag:\n{got}");
+    assert_eq!(got.lines().count(), 2, "expected two merged clusters:\n{got}");
+}
+
+#[test]
+fn merge_sample_merge_per_line_filters() {
+    // -C/-S drop under-supported *input* lines (before clustering), -m only.
+    // Three clips at chr3: sA total 1 (< -C 3), sB rev 0 (< -S 1), sC ok.
+    let input = "\
+chr3\t3000\t>.\t.\t.\t.\t5\t+\tavg_mapq=40,0;count=sA:1,0
+chr3\t3000\t>.\t.\t.\t.\t5\t-\tavg_mapq=40,0;count=sB:5,0
+chr3\t3005\t>.\t.\t.\t.\t5\t+\tavg_mapq=40,0;count=sC:2,2
+";
+    // Defaults -C 3 -S 1: only sC survives parsing -> one cluster, count=2,2.
+    let got = run_merge_stdin(input, &["-m"]);
+    assert_eq!(got.lines().count(), 1, "only sC should survive -C/-S:\n{got}");
+    assert!(got.contains("count=2,2"), "surviving cluster wrong:\n{got}");
+    // -C 0 -S 0 keeps all three; they cluster into one: fwd=1+5+2=8, rev=0+0+2=2,
+    // col-7 = 3 distinct sources (sA, sB, sC).
+    let all = run_merge_stdin(input, &["-m", "-C", "0", "-S", "0"]);
+    assert!(
+        all.contains("\t3\t-\tavg_mapq=40,0;count=8,2"),
+        "relaxed -C/-S should keep all three (col-7 = 3 sources):\n{all}"
+    );
+}
+
+#[test]
 fn merge_no_input_shows_help() {
     // No file -> print help and exit 2, not block on stdin (stdin is /dev/null).
     let output = Command::new(env!("CARGO_BIN_EXE_badclip"))

@@ -90,7 +90,7 @@ replacing minisv's reservoir sampling — deep-cluster counts are capped, not
 scaled), and the active-cluster list is bounded by `-A`.
 
 Flags mirror minisv's kept subset: `-c` min read count (3), `-s` min count on
-each strand (1), `-w` window bp (100), `-A` max active clusters (100), `-C` max
+each strand (1), `-w` window bp (100), `-A` max active clusters (100), `-M` max
 reads compared per cluster (500). `-Q` (default 20) drops input breakends whose
 `equal` quality is below the threshold before clustering (`parse_rec`); breakends
 without an `equal` tag are kept. `-q` (default 0) drops input breakends whose
@@ -130,6 +130,42 @@ cluster-wide strand totals.
 read strand, so `-s` is an approximate two-sided-support heuristic. Fixtures:
 `test/merge01.clip` (unsorted input), `test/merge01.expected` (default-threshold
 golden).
+
+### `-m` sample-merge
+
+`-m` re-runs the **same clustering algorithm** on the (filtered) combination of
+per-sample `merge` outputs to produce population-level, sample-merged calls.
+`merge` and `extract` output share the 9 columns but differ in INFO, so `-m`
+swaps only the input parser (`parse_rec_merge`) and output emitter
+(`write_sv_merge`); `same_sv`/sweep are reused verbatim.
+
+- **Input parsing** (`-m`): mapq from `avg_mapq=q1,q2` (col 7 is a count here,
+  not mapq); per-strand read counts from `count=` summed over its
+  `|`-separated `[src:]f,r` entries (source-prefix optional via `sum_count`, so
+  `-m` output re-feeds cleanly); `count_fr`/`count_rf` read straight from those
+  tags. `-Q` is a no-op (no `equal` tag). `-q`/`-p` apply to the
+  `avg_mapq`-derived `max`/`min` (clips exempt from `-p`).
+- **Per-line filters** (`-m` only, applied in `parse_rec_merge` before
+  clustering): `-C` (default 3) drops input lines whose **total** count
+  (Σ fwd+rev) is below the threshold; `-S` (default 1) drops lines whose
+  per-strand count is below it on either strand.
+- **Counting**: the `-c`/`-s` filters are **read-based** — each input line
+  contributes its `count=` totals, so `-c` thresholds Σ(fwd+rev) and `-s` the
+  per-strand read totals. But the **col-7 count slot is the number of distinct
+  sources** (samples) in the cluster — the union of the `src:` labels across the
+  members' `count=` tags (fallback: member count when the input carries no
+  labels, e.g. a chained `-m` pass over `count=F,R`). `count_fr`/`count_rf` are
+  summed from the input tags (read-weighted), `foldback` when
+  `count_fr*count_rf==0 && ctg1==ctg2`. `avg_mapq=q1,q2` is the unweighted mean
+  of members' per-end avg mapq.
+- **Output INFO** (`-m`): `avg_mapq=q1,q2;count=F,R` (aggregate read `F,R`, **no**
+  per-source breakdown) then, for inversions, `;count_fr=A;count_rf=B[;foldback]`.
+  **No `reads=` tag** (too many at 3202-sample scale). The output is itself
+  `-m`-parseable, so merges chain (col-7 then falls back to member count, since
+  `count=F,R` drops the source labels).
+
+The `-C`/`-S`/`-Q`/`-q`/`-p` per-line filters and `-c`/`-s` cluster filters are
+all no-ops-or-unchanged in the default (non-`-m`) extract path.
 
 ## Interval / offset notation
 

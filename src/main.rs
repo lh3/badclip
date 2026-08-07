@@ -124,7 +124,7 @@ enum Command {
         max_allele: i64,
 
         /// Maximum reads compared per cluster (deterministic cap).
-        #[arg(short = 'C', long = "max-check", default_value_t = 500)]
+        #[arg(short = 'M', long = "max-check", default_value_t = 500)]
         max_check: i64,
 
         /// Drop input breakends whose eseq quality (`equal` tag) is below this.
@@ -139,6 +139,19 @@ enum Command {
         /// (no effect on clips).
         #[arg(short = 'p', long = "min-mapq-min", default_value_t = 10)]
         min_mapq_min: i64,
+
+        /// Treat input as combined `merge` output (sample-merge) instead of
+        /// `extract` output.
+        #[arg(short = 'm', long = "merge-input")]
+        merge_input: bool,
+
+        /// (-m only) drop input lines whose total count is below this.
+        #[arg(short = 'C', long = "min-cnt-in", default_value_t = 3)]
+        min_cnt_in: i64,
+
+        /// (-m only) drop input lines whose per-strand count is below this.
+        #[arg(short = 'S', long = "min-cnt-strand-in", default_value_t = 1)]
+        min_cnt_strand_in: i64,
     },
 }
 
@@ -218,6 +231,9 @@ fn main() -> ExitCode {
             min_equal,
             min_mapq,
             min_mapq_min,
+            merge_input,
+            min_cnt_in,
+            min_cnt_strand_in,
         } => {
             let Some(input) = input else {
                 return print_subcommand_help("merge");
@@ -232,6 +248,9 @@ fn main() -> ExitCode {
                 min_equal,
                 min_mapq,
                 min_mapq_min,
+                merge_input,
+                min_cnt_in,
+                min_cnt_strand_in,
             })
         }
     };
