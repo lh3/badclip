@@ -3,6 +3,7 @@
 
 mod aln;
 mod extract;
+mod fltreg;
 mod flteseq;
 mod geteseq;
 mod io;
@@ -153,6 +154,15 @@ enum Command {
         #[arg(short = 'S', long = "min-cnt-strand-in", default_value_t = 1)]
         min_cnt_strand_in: i64,
     },
+
+    /// Filter `extract`/`merge` breakends that fall in BED regions.
+    Fltreg {
+        /// `extract`/`merge` output (gzip ok; "-" for stdin).
+        input: Option<String>,
+
+        /// BED file of regions to filter against (gzip ok).
+        bed: Option<String>,
+    },
 }
 
 /// Print a subcommand's help (as for `-h`) and return exit code 2. Used when a
@@ -252,6 +262,12 @@ fn main() -> ExitCode {
                 min_cnt_in,
                 min_cnt_strand_in,
             })
+        }
+        Command::Fltreg { input, bed } => {
+            let (Some(input), Some(bed)) = (input, bed) else {
+                return print_subcommand_help("fltreg");
+            };
+            fltreg::run(&input, &bed)
         }
     };
 

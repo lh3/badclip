@@ -29,8 +29,9 @@ cargo run -- extract --paf test/join02.paf   # PAF
 - `src/geteseq.rs`— `geteseq` subcommand: `extract` output → FASTA of `eseq` records.
 - `src/flteseq.rs`— `flteseq` subcommand: filter breakends by pangenome eseq alignment.
 - `src/merge.rs`  — `merge` subcommand: cluster per-read breakends into consensus SV calls.
-- `tests/extract.rs`, `tests/merge.rs` — end-to-end tests driving the compiled binary.
-- `test/`         — `*.paf` inputs, `*.msv` (minisv) references, `bam01*`/`cram01*`/`flt01*`/`merge01*` fixtures/goldens, `minisv.js`.
+- `src/fltreg.rs` — `fltreg` subcommand: drop `extract`/`merge` breakends that fall in BED regions.
+- `tests/extract.rs`, `tests/merge.rs`, `tests/fltreg.rs` — end-to-end tests driving the compiled binary.
+- `test/`         — `*.paf` inputs, `*.msv` (minisv) references, `bam01*`/`cram01*`/`flt01*`/`merge01*` fixtures/goldens, `fltreg01.bed`, `minisv.js`.
 
 ## `geteseq`
 
@@ -166,6 +167,24 @@ swaps only the input parser (`parse_rec_merge`) and output emitter
 
 The `-C`/`-S`/`-Q`/`-q`/`-p` per-line filters and `-c`/`-s` cluster filters are
 all no-ops-or-unchanged in the default (non-`-m`) extract path.
+
+## `fltreg`
+
+Drops `extract`/`merge` output lines whose breakends land in BED regions.
+`fltreg <in> <bed>` (both positional; `-` = stdin for `<in>`, gzip auto on both;
+either missing → help). Since both output formats share the 9 columns, one filter
+serves both: a line is dropped if **either** endpoint — `(ctg1,pos1)` (cols 0,1)
+or, when present, `(ctg2,pos2)` (cols 3,4) — falls in a region; a clip
+(`ctg2="."`) tests only endpoint 1. Survivors are printed verbatim; lines whose
+endpoints can't be parsed are kept.
+
+Positions are raw 0-based offsets and BED is half-open, so offset `p` is inside
+`[start,end)` iff `start <= p < end`. BED loading (`Regions::load`) skips blank /
+`#` / `track` / `browser` lines, takes cols 0/1/2 as `chrom start end`, and per
+contig **sorts by start and merges overlapping/adjacent intervals** into a
+disjoint list; `Regions::contains` then does one `partition_point` binary search
+(the rightmost interval with `start <= p` is the only one that can contain `p`).
+No new dependency. Fixture: `test/fltreg01.bed`.
 
 ## Interval / offset notation
 
