@@ -11,7 +11,7 @@ junctions between chimeric alignments of the same read (*joins*). Joins reveal
 structural rearrangements (translocations, inversions, large indels); clips
 flag reads that end abruptly against nothing.
 
-It has four subcommands, forming a pipeline:
+It has five subcommands, forming a pipeline:
 
 | Subcommand | Purpose |
 |------------|---------|
@@ -19,6 +19,7 @@ It has four subcommands, forming a pipeline:
 | [`geteseq`](#geteseq) | Turn `extract` output into a FASTA of breakend sequences. |
 | [`flteseq`](#flteseq) | Drop breakends already explained by a pangenome. |
 | [`merge`](#merge) | Cluster per-read breakends into consensus SV calls. |
+| [`fltreg`](#fltreg) | Drop breakends that fall in BED regions. |
 
 Every subcommand reads its input from a file or from stdin via `-`, transparently
 decompresses gzip'd input, and prints its own `--help` (instead of waiting on
@@ -245,13 +246,17 @@ Options:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `-c`, `--min-cnt <INT>` | `4` | Minimum supporting-read count to emit a call. |
-| `-s`, `--min-cnt-strand <INT>` | `2` | Minimum read count on each strand. |
+| `-c`, `--min-cnt <INT>` | `3` | Minimum supporting-read count to emit a call. |
+| `-s`, `--min-cnt-strand <INT>` | `1` | Minimum read count on each strand. |
 | `-w`, `--win-size <INT>` | `100` | Clustering window (bp). |
 | `-A`, `--max-allele <INT>` | `100` | Cap on simultaneously-open clusters. |
-| `-C`, `--max-check <INT>` | `500` | Maximum reads compared per cluster. |
+| `-M`, `--max-check <INT>` | `500` | Maximum reads compared per cluster. |
 | `-Q`, `--min-equal <INT>` | `20` | Drop input breakends whose eseq quality (`equal` tag) is below this before clustering. Breakends without an `equal` tag are kept. |
 | `-q`, `--min-mapq <INT>` | `0` | Drop input breakends whose col-7 mapq (the join's larger, or a clip's mapq) is below this. |
+| `-p`, `--min-mapq-min <INT>` | `10` | Drop input **join** breakends whose *smaller* per-hit mapq (the `min` of the `mapq=` pair) is below this; clips are exempt. |
+| `-m`, `--merge-input` | off | Sample-merge mode: treat input as combined `merge` output (see below). |
+| `-C`, `--min-cnt-in <INT>` | `3` | (`-m` only) drop input lines whose total count is below this. |
+| `-S`, `--min-cnt-strand-in <INT>` | `1` | (`-m` only) drop input lines whose per-strand count is below this. |
 
 Breakends within `-w` bp on both endpoints (with `><`/`<>` treated as the same
 inversion) are grouped; a group is reported only if it has at least `-c` reads
@@ -260,9 +265,12 @@ with at least `-s` on each strand. Output keeps the 9-column, TAB-delimited
 merge-derived INFO column:
 
 ```
-ctg1   pos1   ori   ctg2   pos2   .   count   strand   avg_mapq=..;count=..[;count_fr=..;count_rf=..[;foldback]];reads=..
+ctg1   pos1   ori   ctg2   pos2   .   count   strand   avg_mapq=q1,q2;count=..[;count_fr=..;count_rf=..[;foldback]];reads=..
 ```
 
+- `avg_mapq=q1,q2` — mean per-hit mapq of the cluster's reads, split by output
+  endpoint: `q1` on the `ctg1:pos1` side, `q2` on the `ctg2:pos2` side (`q2 = 0`
+  for a clip cluster).
 - `count=src:fwd,rev|…` — for each `source=` dataset present in the cluster (from
   the reads' `source=` tag), its forward,reverse read counts; `|`-joined and
   sorted alphabetically by source. Only sources actually present are listed
@@ -282,9 +290,60 @@ ctg1   pos1   ori   ctg2   pos2   .   count   strand   avg_mapq=..;count=..[;cou
 badclip extract aln.bam | badclip merge - > sv.txt
 ```
 
+### `-m` sample-merge
+
+With `-m`, `merge` re-runs the same clustering on the (filtered) combination of
+several samples' `merge` outputs — a second-level, population merge. Only the
+INFO parsing and emission change; the clustering is identical. mapq is read from
+`avg_mapq=q1,q2` and per-strand read counts from the `count=` tag (summed over
+sources); the `-c`/`-s` cluster filters and `-q`/`-p` stay read-based (`-Q` is a
+no-op — merge output has no `equal` tag). The per-line `-C`/`-S` filters drop
+under-supported input lines before clustering.
+
+Output stays in the 9-column shape but with **column 7 = the number of distinct
+sources** (samples) in the cluster and a compact INFO:
+`avg_mapq=q1,q2;count=F,R` (aggregate forward,reverse reads, no per-source
+breakdown) plus `count_fr`/`count_rf`/`foldback` for inversions — **no `reads=`
+tag**. The output is itself `-m`-parseable, so merges chain.
+
+```sh
+# combine per-sample merge outputs, then re-merge across samples
+cat sample*.merge.txt | badclip merge -m - > population.txt
+```
+
+## `fltreg`
+
+Drop `extract`/`merge` breakends that fall in BED regions (e.g. blacklists,
+centromeres, low-complexity regions).
+
+```sh
+badclip fltreg [INPUT] [BED]
+```
+
+- `INPUT` — `extract` or `merge` output (gzip ok; `-` or omit for stdin).
+- `BED` — BED file of regions to filter against (gzip ok).
+
+Both output formats share the 9-column layout, so one filter serves both. A line
+is **dropped** if **either** breakend endpoint — `(ctg1, pos1)` (columns 1,2) or,
+when present, `(ctg2, pos2)` (columns 4,5) — falls in a region; a clip
+(`ctg2 = "."`) tests only its one endpoint. Survivors are printed verbatim; a
+line whose endpoints can't be parsed is kept.
+
+Positions are raw 0-based offsets and BED intervals are half-open, so an offset
+`p` is inside `[start, end)` iff `start <= p < end`. The BED is loaded into
+per-contig intervals, sorted by start and merged into a disjoint list, so each
+lookup is a single binary search (no new dependency; overlapping BED input is
+handled).
+
+```sh
+badclip merge - < sv.txt | badclip fltreg - blacklist.bed.gz > sv.filtered.txt
+```
+
 ## Status
 
-All four subcommands are implemented: `extract` (SAM/BAM/CRAM auto-detected, or
+All five subcommands are implemented: `extract` (SAM/BAM/CRAM auto-detected, or
 PAF via `--paf`) finds breakends; `geteseq` turns its output into FASTA; `flteseq`
-filters breakends against a pangenome; and `merge` clusters them into consensus
-SV calls. See `CLAUDE.md` for internals and the interval/offset convention.
+filters breakends against a pangenome; `merge` clusters them into consensus SV
+calls (with `-m` for a second-level, cross-sample merge); and `fltreg` drops
+breakends in BED regions. See `CLAUDE.md` for internals and the interval/offset
+convention.
