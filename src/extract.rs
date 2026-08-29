@@ -55,6 +55,135 @@ pub struct ExtractOpts {
     pub min_equal: i64,
 }
 
+/// Read lengths up to this are tallied in a fixed counting array; only longer
+/// reads are kept individually, so a billion-short-read BAM needs O(1) memory.
+const MAX_COUNTED_LEN: i64 = 65535;
+
+/// Per-read input statistics, printed to stderr at the end of a run.
+///
+/// A "read" is one primary alignment record (alignment input) or one PAF read
+/// group; reads are counted before the `-a` filter, so a fully filtered read
+/// still counts. `primary_bases` sums the query span (`qe - qs`) of each read's
+/// primary alignment — PAF carries no primary flag (all kept lines are
+/// `tp:A:P`), so the read's longest query span stands in for it there.
+pub(crate) struct Stats {
+    n_reads: u64,
+    primary_bases: u64,
+    total_len: u64,
+    /// `short_cnt[l]` = number of reads of length `l <= MAX_COUNTED_LEN`.
+    short_cnt: Vec<u64>,
+    /// Individual lengths of reads longer than `MAX_COUNTED_LEN` (rare).
+    long_lens: Vec<i64>,
+}
+
+impl Default for Stats {
+    fn default() -> Self {
+        Stats {
+            n_reads: 0,
+            primary_bases: 0,
+            total_len: 0,
+            short_cnt: vec![0; (MAX_COUNTED_LEN + 1) as usize],
+            long_lens: Vec::new(),
+        }
+    }
+}
+
+impl Stats {
+    /// Account one read: its length and its primary alignment's query span.
+    pub(crate) fn add_read(&mut self, qlen: i64, primary_span: i64) {
+        self.n_reads += 1;
+        self.primary_bases += primary_span.max(0) as u64;
+        let qlen = qlen.max(0);
+        self.total_len += qlen as u64;
+        if qlen <= MAX_COUNTED_LEN {
+            self.short_cnt[qlen as usize] += 1;
+        } else {
+            self.long_lens.push(qlen);
+        }
+    }
+
+    /// N50 read length: walking reads from longest to shortest, the length at
+    /// which the running sum first reaches half the total read length. Long
+    /// reads are walked individually, then the counting array from the top.
+    fn n50(&mut self) -> i64 {
+        let total = self.total_len;
+        let mut cum = 0u64;
+        self.long_lens.sort_unstable_by(|a, b| b.cmp(a));
+        for &len in &self.long_lens {
+            cum += len as u64;
+            if cum * 2 >= total {
+                return len;
+            }
+        }
+        for len in (1..=MAX_COUNTED_LEN).rev() {
+            let cnt = self.short_cnt[len as usize];
+            if cnt == 0 {
+                continue;
+            }
+            cum += cnt * len as u64;
+            if cum * 2 >= total {
+                // The threshold falls inside this length bin, possibly short of
+                // its last copy; every copy has the same length, so return it.
+                return len;
+            }
+        }
+        0
+    }
+
+    /// Print the summary to stderr.
+    fn report(&mut self) {
+        eprintln!("number of reads: {}", self.n_reads);
+        eprintln!("total bases in primary alignments: {}", self.primary_bases);
+        eprintln!("read N50: {}", self.n50());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_COUNTED_LEN, Stats};
+
+    /// N50 computed the straightforward way, for cross-checking.
+    fn naive_n50(lens: &[i64]) -> i64 {
+        let mut lens = lens.to_vec();
+        lens.sort_unstable_by(|a, b| b.cmp(a));
+        let total: i64 = lens.iter().sum();
+        let mut cum = 0;
+        for &l in &lens {
+            cum += l;
+            if cum * 2 >= total {
+                return l;
+            }
+        }
+        0
+    }
+
+    fn stats_n50(lens: &[i64]) -> i64 {
+        let mut stats = Stats::default();
+        for &l in lens {
+            stats.add_read(l, 0);
+        }
+        stats.n50()
+    }
+
+    #[test]
+    fn n50_matches_naive() {
+        let m = MAX_COUNTED_LEN;
+        let cases: &[&[i64]] = &[
+            &[],
+            &[100],
+            &[14807, 16920, 17508],          // the bam01 fixture lengths
+            &[10, 10, 10, 10],               // threshold inside one bin
+            &[m + 5000],                     // a single long read
+            &[m + 5000, m + 5000, 10000],    // N50 among the long reads
+            &[m + 5000, 50000, 50000, 50000], // N50 crosses into the short array
+            &[m, m + 1],                     // boundary lengths
+        ];
+        for lens in cases {
+            assert_eq!(stats_n50(lens), naive_n50(lens), "lens={lens:?}");
+        }
+    }
+}
+
 /// Whether a hit passes the alignment-length filter (`-a`). Note `-q` is NOT
 /// applied here — it is a post-filter on the emitted line's col-7 mapq (see
 /// `emit_clip`/`emit_join`), so it never drops an alignment upfront.
@@ -164,23 +293,47 @@ fn eseq_qual(quals: &[u8]) -> i64 {
 pub fn run(opts: &ExtractOpts) -> io::Result<()> {
     let stdout = io::stdout();
     let mut out = io::BufWriter::new(stdout.lock());
+    let mut stats = Stats::default();
     if opts.paf {
         let reader = open_reader(&opts.input)?;
-        run_paf(reader, opts, &mut out)
+        run_paf(reader, opts, &mut stats, &mut out)?;
     } else {
-        crate::aln::run(&opts.input, opts, &mut out)
+        crate::aln::run(&opts.input, opts, &mut stats, &mut out)?;
     }
+    out.flush()?;
+    stats.report();
+    Ok(())
 }
 
 /// Stream a PAF `reader`, grouping hits by read name (input is assumed grouped),
 /// and emit breakends for each read.
-fn run_paf(reader: Box<dyn BufRead>, opts: &ExtractOpts, out: &mut impl Write) -> io::Result<()> {
+fn run_paf(
+    reader: Box<dyn BufRead>,
+    opts: &ExtractOpts,
+    stats: &mut Stats,
+    out: &mut impl Write,
+) -> io::Result<()> {
     let mut group: Vec<Hit> = Vec::new();
+    // Per-read stats state, tracked before the -a filter (so a fully filtered
+    // read still counts): (qname, qlen, longest query span seen). PAF has no
+    // primary flag, so the longest span stands in for the primary alignment.
+    let mut cur: Option<(String, i64, i64)> = None;
     for line in reader.lines() {
         let line = line?;
         let Some(hit) = parse_paf_line(&line) else {
             continue;
         };
+        match &mut cur {
+            Some((name, _, span)) if *name == hit.qname => {
+                *span = (*span).max(hit.qe - hit.qs);
+            }
+            _ => {
+                if let Some((_, qlen, span)) = cur.take() {
+                    stats.add_read(qlen, span);
+                }
+                cur = Some((hit.qname.clone(), hit.qlen, hit.qe - hit.qs));
+            }
+        }
         if !passes_filter(&hit, opts) {
             continue;
         }
@@ -194,6 +347,9 @@ fn run_paf(reader: Box<dyn BufRead>, opts: &ExtractOpts, out: &mut impl Write) -
         group.push(hit);
     }
     emit_read(&mut group, opts, None, None, out)?;
+    if let Some((_, qlen, span)) = cur {
+        stats.add_read(qlen, span);
+    }
     Ok(())
 }
 

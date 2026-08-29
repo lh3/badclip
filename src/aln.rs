@@ -29,13 +29,18 @@ use noodles_sam::alignment::record::cigar::op::Kind;
 use noodles_sam::alignment::record::data::field::{Tag, Value};
 use noodles_util::alignment;
 
-use crate::extract::{ExtractOpts, emit_read, passes_filter};
+use crate::extract::{ExtractOpts, Stats, emit_read, passes_filter};
 use crate::io::open_reader;
 use crate::paf::{Hit, Strand};
 
 /// Read an alignment file from `input` (`"-"` = stdin), autodetecting
 /// SAM/BAM/CRAM, and emit breakends. CRAM requires `opts.reference` (`-r`).
-pub fn run(input: &str, opts: &ExtractOpts, out: &mut impl Write) -> io::Result<()> {
+pub fn run(
+    input: &str,
+    opts: &ExtractOpts,
+    stats: &mut Stats,
+    out: &mut impl Write,
+) -> io::Result<()> {
     let inner: Box<dyn Read> = if input == "-" {
         Box::new(io::stdin().lock())
     } else {
@@ -69,7 +74,7 @@ pub fn run(input: &str, opts: &ExtractOpts, out: &mut impl Write) -> io::Result<
     let alt = load_alt(opts.alt.as_deref())?;
 
     for result in reader.records(&header) {
-        emit_record(&*result?, &header, &names, &alt, opts, out)?;
+        emit_record(&*result?, &header, &names, &alt, opts, stats, out)?;
     }
     Ok(())
 }
@@ -118,12 +123,14 @@ fn reference_repository(reference: &str) -> io::Result<fasta::Repository> {
 /// `alt` is the set of ALT contig names (`--alt`): a read whose primary hit lands
 /// on an ALT contig is skipped entirely, and ALT hits in the `SA` tag are dropped
 /// before clips/joins are formed.
+#[allow(clippy::too_many_arguments)]
 fn emit_record(
     record: &dyn Record,
     header: &Header,
     names: &[String],
     alt: &HashSet<String>,
     opts: &ExtractOpts,
+    stats: &mut Stats,
     out: &mut impl Write,
 ) -> io::Result<()> {
     let flags = record.flags()?;
@@ -173,6 +180,9 @@ fn emit_record(
     }
     let primary = make_hit(qname.clone(), ctg.clone(), pos0, strand, mapq, &ops);
     let qlen = primary.qlen;
+    // Count the read before any filtering; the primary's query span (qe - qs)
+    // is its contribution to the primary-aligned base total.
+    stats.add_read(qlen, primary.qe - primary.qs);
     let mut hits = vec![primary];
 
     // Supplementary hits, from the SA:Z: tag. Skip supplementary hits on ALT

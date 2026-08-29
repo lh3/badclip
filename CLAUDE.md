@@ -246,6 +246,19 @@ join's `max`, or a clip's mapq) is below the threshold. Both shrink the output
 feeding downstream tools. In the `--help` listing `-q` is placed after `-Q` to
 reflect that it is a post-filter.
 
+**End-of-run stats** (`extract.rs::Stats`, printed to stderr after a successful
+run): number of reads, total bases in primary alignments, and read N50. A read
+is one primary record (alignment input; counted after the ALT skip) or one PAF
+read group; counted **before** the `-a` filter. Primary bases sum the primary
+hit's aligned query span (`qe - qs`); PAF carries no primary flag (all kept
+lines are `tp:A:P`), so the read's longest query span stands in. N50: walking
+reads from longest to shortest, the read length at which the running sum first
+reaches half the total read length. To stay O(1)-memory on billion-read
+short-read BAMs, lengths `<= 65535` (`MAX_COUNTED_LEN`) are tallied in a fixed
+counting array and only longer reads are kept individually; the N50 walk visits
+the long list first, then the array from the top (unit test:
+`extract::tests::n50_matches_naive`).
+
 **eseq/elen (alignment-file input only, not PAF).** With the read sequence
 available, each breakend also gets a window around the junction: read-forward
 `[max(lo-f,0), min(hi+f,qlen)]` where `lo=min(y0.qe,y1.qs)`, `hi=max(..)` for a

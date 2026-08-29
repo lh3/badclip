@@ -70,6 +70,11 @@ badclip extract --paf aln.paf.gz            # PAF (gzip auto-detected)
 minimap2 … | badclip extract --paf -        # PAF from stdin
 ```
 
+At the end of a run, `extract` prints input statistics to stderr: the number of
+reads, the total bases in primary alignments (the primary hit's aligned query
+span per read; for PAF, which has no primary flag, the read's longest span), and
+the read N50 length. Reads are counted before the `-a` filter.
+
 ### Input assumptions
 
 - **Alignment file (SAM/BAM/CRAM)**: the container format is auto-detected. A
