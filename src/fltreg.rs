@@ -6,7 +6,9 @@
 //! (cols 0,1) or, when present, `(ctg2,pos2)` (cols 3,4) — lands inside a BED
 //! region; clips (`ctg2="."`) only test the first endpoint. Survivors are printed
 //! verbatim. Positions are raw 0-based offsets and BED intervals are half-open, so
-//! an offset `p` is inside `[start,end)` iff `start <= p < end`.
+//! an offset `p` is inside `[start,end)` iff `start <= p < end`. `-l` pads every
+//! region to `[start-l, end+l)` before testing (padding is applied at load time,
+//! before the merge below, so lookups are unchanged).
 //!
 //! Regions are held per contig as start-sorted, merged (disjoint) intervals, so a
 //! single binary search (`partition_point`) decides containment — no new
@@ -22,11 +24,12 @@ use crate::io::open_reader;
 struct Regions(HashMap<String, Vec<(i64, i64)>>);
 
 impl Regions {
-    /// Load a BED file (gzip ok; "-" for stdin) into per-contig merged intervals.
+    /// Load a BED file (gzip ok; "-" for stdin) into per-contig merged intervals,
+    /// padding each `[s,e)` to `[s-margin, e+margin)` first.
     /// Blank lines and `#`/`track`/`browser` header lines are skipped, as are
     /// lines whose first three tab columns are not `chrom start end` with integer
     /// coordinates.
-    fn load(path: &str) -> io::Result<Regions> {
+    fn load(path: &str, margin: i64) -> io::Result<Regions> {
         let mut map: HashMap<String, Vec<(i64, i64)>> = HashMap::new();
         for line in open_reader(path)?.lines() {
             let line = line?;
@@ -42,7 +45,7 @@ impl Regions {
                 continue;
             };
             if let (Ok(s), Ok(e)) = (s.parse::<i64>(), e.parse::<i64>()) {
-                map.entry(chrom.to_string()).or_default().push((s, e));
+                map.entry(chrom.to_string()).or_default().push((s - margin, e + margin));
             }
         }
         // Sort by start and merge overlapping/adjacent intervals so each contig's
@@ -75,9 +78,10 @@ impl Regions {
 }
 
 /// Filter `input` (`extract`/`merge` output; gzip ok, "-" for stdin) against the
-/// BED file `bed`, printing lines whose breakends both avoid every region.
-pub fn run(input: &str, bed: &str) -> io::Result<()> {
-    let regions = Regions::load(bed)?;
+/// BED file `bed` (each region padded by `margin` on both sides), printing lines
+/// whose breakends both avoid every region.
+pub fn run(input: &str, bed: &str, margin: i64) -> io::Result<()> {
+    let regions = Regions::load(bed, margin)?;
     let reader = open_reader(input)?;
     let stdout = io::stdout();
     let mut out = io::BufWriter::new(stdout.lock());

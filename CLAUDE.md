@@ -171,15 +171,17 @@ all no-ops-or-unchanged in the default (non-`-m`) extract path.
 ## `fltreg`
 
 Drops `extract`/`merge` output lines whose breakends land in BED regions.
-`fltreg <in> <bed>` (both positional; `-` = stdin for `<in>`, gzip auto on both;
-either missing → help). Since both output formats share the 9 columns, one filter
+`fltreg [-l INT] <in> <bed>` (both positional; `-` = stdin for `<in>`, gzip auto
+on both; either missing → help). Since both output formats share the 9 columns, one filter
 serves both: a line is dropped if **either** endpoint — `(ctg1,pos1)` (cols 0,1)
 or, when present, `(ctg2,pos2)` (cols 3,4) — falls in a region; a clip
 (`ctg2="."`) tests only endpoint 1. Survivors are printed verbatim; lines whose
 endpoints can't be parsed are kept.
 
 Positions are raw 0-based offsets and BED is half-open, so offset `p` is inside
-`[start,end)` iff `start <= p < end`. BED loading (`Regions::load`) skips blank /
+`[start,end)` iff `start <= p < end`. `-l` (default 0) pads every region to
+`[start-l, end+l)`; the padding is applied in `Regions::load` **before** the
+merge, so `contains` is unchanged. BED loading (`Regions::load`) skips blank /
 `#` / `track` / `browser` lines, takes cols 0/1/2 as `chrom start end`, and per
 contig **sorts by start and merges overlapping/adjacent intervals** into a
 disjoint list; `Regions::contains` then does one `partition_point` binary search

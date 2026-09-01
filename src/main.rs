@@ -164,6 +164,10 @@ enum Command {
 
         /// BED file of regions to filter against (gzip ok).
         bed: Option<String>,
+
+        /// Pad each BED interval to [st-l, en+l) before testing.
+        #[arg(short = 'l', long = "margin", default_value_t = 0)]
+        margin: i64,
     },
 }
 
@@ -265,11 +269,11 @@ fn main() -> ExitCode {
                 min_cnt_strand_in,
             })
         }
-        Command::Fltreg { input, bed } => {
+        Command::Fltreg { input, bed, margin } => {
             let (Some(input), Some(bed)) = (input, bed) else {
                 return print_subcommand_help("fltreg");
             };
-            fltreg::run(&input, &bed)
+            fltreg::run(&input, &bed, margin)
         }
     };
 

@@ -11,11 +11,12 @@ fn test_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test")
 }
 
-/// Run `badclip fltreg - <bed>` feeding `input` on stdin; return stdout.
-fn run_fltreg(input: &str) -> String {
+/// Run `badclip fltreg [args..] - <bed>` feeding `input` on stdin; return stdout.
+fn run_fltreg(input: &str, args: &[&str]) -> String {
     let bed = test_dir().join("fltreg01.bed");
     let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
         .arg("fltreg")
+        .args(args)
         .arg("-")
         .arg(&bed)
         .stdin(Stdio::piped())
@@ -44,7 +45,7 @@ chr2\t55\t>>\tchr2\t9000\tctg2_in\t60\t+\tsrc
 chr1\t9000\t>>\tchr1\t9500\tboth_out\t60\t+\tsrc
 chr3\t150\t>>\tchr3\t150\tother_ctg\t60\t+\tsrc
 ";
-    let got = run_fltreg(input);
+    let got = run_fltreg(input, &[]);
     // ep1_in (150 in [100,250)), ep2_in (5500 in [5000,6000)), clip_in_merged
     // (240 in the merged [100,250)), and ctg2_in (55 in [50,60)) are dropped.
     for dropped in ["ep1_in", "ep2_in", "clip_in_merged", "ctg2_in"] {
@@ -62,7 +63,7 @@ fn fltreg_half_open_boundary() {
 chr1\t100\t>.\t.\t.\tat_start\t60\t+\tsrc
 chr1\t250\t>.\t.\t.\tat_end\t60\t+\tsrc
 ";
-    let got = run_fltreg(input);
+    let got = run_fltreg(input, &[]);
     assert!(!got.contains("at_start"), "p==start should be dropped:\n{got}");
     assert!(got.contains("at_end"), "p==end (merged) should be kept:\n{got}");
     assert_eq!(got.lines().count(), 1, "only at_end should survive:\n{got}");
@@ -72,7 +73,7 @@ chr1\t250\t>.\t.\t.\tat_end\t60\t+\tsrc
 fn fltreg_survivors_are_verbatim() {
     // A surviving line is printed byte-for-byte unchanged.
     let line = "chr1\t9000\t>>\tchr1\t9500\tr\t60\t+\tsource=foo;idx=0;mapq=60,60";
-    let got = run_fltreg(&format!("{line}\n"));
+    let got = run_fltreg(&format!("{line}\n"), &[]);
     assert_eq!(got, format!("{line}\n"));
 }
 
@@ -89,4 +90,31 @@ fn fltreg_no_input_shows_help() {
         String::from_utf8(output.stdout).unwrap().contains("Usage: badclip fltreg"),
         "expected usage message"
     );
+}
+
+#[test]
+fn fltreg_margin() {
+    // -l 100 pads every region to [st-l, en+l): chr1 [0,350), chr1 [4900,6100),
+    // chr2 [-50,160). The padded intervals are still half-open.
+    let input = "\
+chr1\t300\t>.\t.\t.\tpad_in\t60\t+\tsrc
+chr1\t350\t>.\t.\t.\tpad_end\t60\t+\tsrc
+chr1\t4900\t>.\t.\t.\tpad_start\t60\t+\tsrc
+chr1\t4899\t>.\t.\t.\tbefore_pad\t60\t+\tsrc
+chr1\t9000\t>>\tchr1\t6099\tep2_pad_in\t60\t+\tsrc
+chr1\t9000\t>>\tchr1\t6100\tep2_pad_end\t60\t+\tsrc
+chr2\t0\t>.\t.\t.\tneg_start\t60\t+\tsrc
+";
+    let got = run_fltreg(input, &["-l", "100"]);
+    for dropped in ["pad_in", "pad_start", "ep2_pad_in", "neg_start"] {
+        assert!(!got.contains(dropped), "{dropped} should be dropped:\n{got}");
+    }
+    for kept in ["pad_end", "before_pad", "ep2_pad_end"] {
+        assert!(got.contains(kept), "{kept} should be kept:\n{got}");
+    }
+    assert_eq!(got.lines().count(), 3, "expected three survivors:\n{got}");
+
+    // Default -l 0: none of the padded-only positions are filtered.
+    let got = run_fltreg(input, &[]);
+    assert_eq!(got.lines().count(), 7, "default margin must not filter:\n{got}");
 }

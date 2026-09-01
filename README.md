@@ -322,11 +322,13 @@ Drop `extract`/`merge` breakends that fall in BED regions (e.g. blacklists,
 centromeres, low-complexity regions).
 
 ```sh
-badclip fltreg [INPUT] [BED]
+badclip fltreg [-l INT] [INPUT] [BED]
 ```
 
 - `INPUT` — `extract` or `merge` output (gzip ok; `-` or omit for stdin).
 - `BED` — BED file of regions to filter against (gzip ok).
+- `-l INT` — pad each BED interval to `[start-l, end+l)` before testing
+  (default 0, i.e. the raw intervals).
 
 Both output formats share the 9-column layout, so one filter serves both. A line
 is **dropped** if **either** breakend endpoint — `(ctg1, pos1)` (columns 1,2) or,
@@ -335,8 +337,9 @@ when present, `(ctg2, pos2)` (columns 4,5) — falls in a region; a clip
 line whose endpoints can't be parsed is kept.
 
 Positions are raw 0-based offsets and BED intervals are half-open, so an offset
-`p` is inside `[start, end)` iff `start <= p < end`. The BED is loaded into
-per-contig intervals, sorted by start and merged into a disjoint list, so each
+`p` is inside `[start, end)` iff `start <= p < end` (or `start-l <= p < end+l`
+with `-l`). The BED is loaded into per-contig intervals, padded by `-l`, sorted
+by start and merged into a disjoint list, so each
 lookup is a single binary search (no new dependency; overlapping BED input is
 handled).
 
