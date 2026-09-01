@@ -6,6 +6,8 @@ mod extract;
 mod fltreg;
 mod flteseq;
 mod geteseq;
+#[allow(dead_code)]
+mod iitree;
 mod io;
 mod merge;
 mod paf;
