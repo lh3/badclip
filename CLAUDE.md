@@ -249,9 +249,13 @@ feeding downstream tools. In the `--help` listing `-q` is placed after `-Q` to
 reflect that it is a post-filter.
 
 **End-of-run stats** (`extract.rs::Stats`, printed to stderr after a successful
-run): number of reads, total bases in primary alignments, and read N50. A read
-is one primary record (alignment input; counted after the ALT skip) or one PAF
-read group; counted **before** the `-a` filter. Primary bases sum the primary
+run): number of reads, number of unmapped reads, total bases in primary
+alignments, and read N50. A read is one primary record (alignment input;
+secondary/supplementary records are ignored; unmapped records are included —
+their `SEQ` length counts toward N50, with no primary bases; mapped reads are
+counted after the ALT skip) or one PAF read group (an unmapped PAF read is a line
+whose target name, col 6, is `*` — minimap2 `--paf-no-hit`;
+`paf.rs::parse_paf_unmapped`); counted **before** the `-a` filter. Primary bases sum the primary
 hit's aligned query span (`qe - qs`); PAF carries no primary flag (all kept
 lines are `tp:A:P`), so the read's longest query span stands in. N50: walking
 reads from longest to shortest, the read length at which the running sum first

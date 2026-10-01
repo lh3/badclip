@@ -27,7 +27,7 @@
 use std::io::{self, BufRead, Write};
 
 use crate::io::open_reader;
-use crate::paf::{Hit, Strand, parse_paf_line};
+use crate::paf::{Hit, Strand, parse_paf_line, parse_paf_unmapped};
 
 /// Options for `badclip extract`.
 pub struct ExtractOpts {
@@ -61,13 +61,15 @@ const MAX_COUNTED_LEN: i64 = 65535;
 
 /// Per-read input statistics, printed to stderr at the end of a run.
 ///
-/// A "read" is one primary alignment record (alignment input) or one PAF read
-/// group; reads are counted before the `-a` filter, so a fully filtered read
-/// still counts. `primary_bases` sums the query span (`qe - qs`) of each read's
+/// A "read" is one primary record (alignment input; secondary/supplementary
+/// records are ignored, unmapped ones are counted and also tallied in
+/// `n_unmapped`) or one PAF read group; reads are counted before the `-a`
+/// filter, so a fully filtered read still counts. `primary_bases` sums the query span (`qe - qs`) of each read's
 /// primary alignment — PAF carries no primary flag (all kept lines are
 /// `tp:A:P`), so the read's longest query span stands in for it there.
 pub(crate) struct Stats {
     n_reads: u64,
+    n_unmapped: u64,
     primary_bases: u64,
     total_len: u64,
     /// `short_cnt[l]` = number of reads of length `l <= MAX_COUNTED_LEN`.
@@ -80,6 +82,7 @@ impl Default for Stats {
     fn default() -> Self {
         Stats {
             n_reads: 0,
+            n_unmapped: 0,
             primary_bases: 0,
             total_len: 0,
             short_cnt: vec![0; (MAX_COUNTED_LEN + 1) as usize],
@@ -100,6 +103,13 @@ impl Stats {
         } else {
             self.long_lens.push(qlen);
         }
+    }
+
+    /// Account one unmapped read: it counts toward the read total and the N50
+    /// but contributes no primary-aligned bases.
+    pub(crate) fn add_unmapped(&mut self, qlen: i64) {
+        self.n_unmapped += 1;
+        self.add_read(qlen, 0);
     }
 
     /// N50 read length: walking reads from longest to shortest, the length at
@@ -133,6 +143,7 @@ impl Stats {
     /// Print the summary to stderr.
     fn report(&mut self) {
         eprintln!("number of reads: {}", self.n_reads);
+        eprintln!("number of unmapped reads: {}", self.n_unmapped);
         eprintln!("total bases in primary alignments: {}", self.primary_bases);
         eprintln!("read N50: {}", self.n50());
     }
@@ -320,6 +331,15 @@ fn run_paf(
     let mut cur: Option<(String, i64, i64)> = None;
     for line in reader.lines() {
         let line = line?;
+        // An unmapped read (target `*`) has a single line and no hits; it only
+        // feeds the stats.
+        if let Some(qlen) = parse_paf_unmapped(&line) {
+            if let Some((_, qlen, span)) = cur.take() {
+                stats.add_read(qlen, span);
+            }
+            stats.add_unmapped(qlen);
+            continue;
+        }
         let Some(hit) = parse_paf_line(&line) else {
             continue;
         };

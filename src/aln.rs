@@ -4,7 +4,8 @@
 //! (SAM/BAM/CRAM by magic bytes), so one path serves all three. A read's
 //! chimeric hits are recovered from the primary alignment alone: its `SA:Z:` tag
 //! lists the supplementary alignments. So we iterate primary records only —
-//! skipping secondary, supplementary, and unmapped records — and reconstruct
+//! skipping secondary and supplementary records (unmapped ones only feed the
+//! end-of-run stats) — and reconstruct
 //! every hit from the primary's CIGAR plus the `SA` entries. This needs no record
 //! grouping, so it works on both name-grouped and coordinate-sorted files.
 //!
@@ -134,7 +135,12 @@ fn emit_record(
     out: &mut impl Write,
 ) -> io::Result<()> {
     let flags = record.flags()?;
-    if flags.is_secondary() || flags.is_supplementary() || flags.is_unmapped() {
+    if flags.is_secondary() || flags.is_supplementary() {
+        return Ok(());
+    }
+    // Unmapped primary records only feed the end-of-run stats.
+    if flags.is_unmapped() {
+        stats.add_unmapped(record.sequence().len() as i64);
         return Ok(());
     }
 

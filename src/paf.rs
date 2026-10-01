@@ -39,6 +39,15 @@ pub struct Hit {
     pub mapq: i64,
 }
 
+/// If `line` is an unmapped-read PAF line (target name `*`, as minimap2
+/// writes with `--paf-no-hit`), return its query length.
+pub fn parse_paf_unmapped(line: &str) -> Option<i64> {
+    let mut t = line.split('\t');
+    let _qname = t.next()?;
+    let qlen = t.next()?.parse().ok()?;
+    (t.nth(3)? == "*").then_some(qlen)
+}
+
 /// Parse a single PAF line into a [`Hit`].
 ///
 /// Returns `None` when the line is not a usable alignment: too few columns, a

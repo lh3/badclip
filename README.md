@@ -71,9 +71,11 @@ minimap2 … | badclip extract --paf -        # PAF from stdin
 ```
 
 At the end of a run, `extract` prints input statistics to stderr: the number of
-reads, the total bases in primary alignments (the primary hit's aligned query
-span per read; for PAF, which has no primary flag, the read's longest span), and
-the read N50 length. Reads are counted before the `-a` filter.
+reads (primary records, including unmapped ones; secondary and supplementary
+records are ignored), the number of unmapped reads (for PAF, lines whose target
+name is `*`, as from `minimap2 --paf-no-hit`), the total bases in primary
+alignments (the primary hit's aligned query span per read; for PAF, which has no
+primary flag, the read's longest span), and the read N50 length. Reads are counted before the `-a` filter.
 
 ### Input assumptions
 
