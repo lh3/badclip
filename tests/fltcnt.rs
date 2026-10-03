@@ -47,9 +47,10 @@ fn fltcnt_counts() {
     // -l -1 disables the distance/clip filter. Default -r 0: no --rest
     // (`s.raw`) reads allowed, so only the pure-`s.flt` tra passes -c 0.
     assert_eq!(kept(INPUT, &["-l", "-1", "-c", "0"]), ["tra"]);
-    assert!(kept(INPUT, &["-l", "-1"]).is_empty());
-    // -r -1 lifts the cap. Default -c: >= 5 filtered reads.
-    assert_eq!(kept(INPUT, &["-l", "-1", "-r", "-1"]), ["clip", "near", "far"]);
+    assert_eq!(kept(INPUT, &["-l", "-1"]), ["tra"]);
+    // -r -1 lifts the cap. Default -c: >= 3 filtered reads.
+    assert_eq!(kept(INPUT, &["-l", "-1", "-r", "-1"]), ["clip", "near", "far", "tra"]);
+    assert_eq!(kept(INPUT, &["-l", "-1", "-r", "-1", "-c", "5"]), ["clip", "near", "far"]);
     assert_eq!(kept(INPUT, &["-l", "-1", "-r", "-1", "-c", "0"]).len(), 5);
     // -s: each filtered strand.
     assert_eq!(kept(INPUT, &["-l", "-1", "-r", "-1", "-s", "1"]), ["clip", "near"]);
@@ -81,8 +82,8 @@ chr1\t100\t>>\tchr1\t5000\tx\t6\t+\tavg_mapq=60,60;count=A:1,1|B:3,3|C:2,0
     assert_eq!(kept(input, &["--src", "B", "-r", "4"]), ["x"]);
     assert_eq!(kept(input, &["--src", "B", "-r", "-1"]), ["x"]);
     // Comma lists: --src A,C has 4 reads (fails -c 5), and C has 0 on reverse.
-    assert!(kept(input, &["--src", "A,C", "-r", "-1"]).is_empty());
-    assert_eq!(kept(input, &["--src", "A,C", "-c", "4", "-r", "-1"]), ["x"]);
+    assert_eq!(kept(input, &["--src", "A,C", "-r", "-1"]), ["x"]);
+    assert!(kept(input, &["--src", "A,C", "-c", "5", "-r", "-1"]).is_empty());
     assert!(kept(input, &["--src", "A,C", "-c", "4", "-s", "2", "-r", "-1"]).is_empty());
     // All sources in --src: nothing left for --rest.
     assert_eq!(kept(input, &["--src", "A,B,C"]), ["x"]);

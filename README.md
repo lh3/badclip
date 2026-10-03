@@ -361,7 +361,7 @@ badclip fltcnt [OPTIONS] [INPUT]
 ```
 
 - `INPUT` — `merge` output (gzip ok; `-` or omit for stdin).
-- `-c INT` — minimum reads from the `--src` sources (default 5).
+- `-c INT` — minimum reads from the `--src` sources (default 3).
 - `-s INT` — minimum `--src` reads on each strand (default 0).
 - `-r INT` — maximum reads from the `--rest` sources (default 0, i.e. every
   read must come from `--src`; `-1` = no limit).

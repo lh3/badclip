@@ -179,7 +179,7 @@ enum Command {
         input: Option<String>,
 
         /// Minimum reads from the --src sources.
-        #[arg(short = 'c', long = "min-src", default_value_t = 5)]
+        #[arg(short = 'c', long = "min-src", default_value_t = 3)]
         min_src: i64,
 
         /// Minimum reads from the --src sources on each strand.
