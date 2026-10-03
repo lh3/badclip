@@ -63,12 +63,34 @@ fn fltcnt_min_dist() {
 
 #[test]
 fn fltcnt_explicit_sources() {
-    let input = "chr1\t100\t>>\tchr1\t5000\tx\t6\t+\tavg_mapq=60,60;count=A:1,1|B:3,3\n";
-    // Neither source matches the *.raw/*.flt convention: abort.
+    let input = "\
+chr1\t100\t>>\tchr1\t5000\tx\t6\t+\tavg_mapq=60,60;count=A:1,1|B:3,3|C:2,0
+";
+    // No *.flt source: everything is --rest, so -c fails, with a warning.
+    let out = run_fltcnt(input, &[]);
+    assert!(out.status.success() && out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--src"));
+    // --src B (6 reads); --rest defaults to A+C (4 reads).
+    assert_eq!(kept(input, &["--src", "B"]), ["x"]);
+    assert_eq!(kept(input, &["--src", "B", "-r", "4"]), ["x"]);
+    assert!(kept(input, &["--src", "B", "-r", "5"]).is_empty());
+    // Comma lists: --src A,C has 4 reads (fails -c 5), and C has 0 on reverse.
+    assert!(kept(input, &["--src", "A,C"]).is_empty());
+    assert_eq!(kept(input, &["--src", "A,C", "-c", "4"]), ["x"]);
+    assert!(kept(input, &["--src", "A,C", "-c", "4", "-s", "2"]).is_empty());
+    // Explicit --rest: only A counts (2 reads).
+    assert!(kept(input, &["--src", "B", "--rest", "A", "-r", "3"]).is_empty());
+    assert_eq!(kept(input, &["--src", "B", "--rest", "A,C", "-r", "3"]), ["x"]);
+}
+
+#[test]
+fn fltcnt_no_source_aborts() {
+    // `merge -m` output has no source labels: neither group matches.
+    let input = "chr1\t100\t>>\tchr1\t5000\tx\t6\t+\tavg_mapq=60,60;count=3,3\n";
     let out = run_fltcnt(input, &[]);
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("--src-raw"));
-    // Explicit names: B is the filtered source (6 reads), A the raw one (2).
-    assert_eq!(kept(input, &["--src-raw", "A", "--src-flt", "B"]), ["x"]);
-    assert!(kept(input, &["--src-raw", "A", "--src-flt", "B", "-r", "3"]).is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--src"));
+    // With explicit lists, a line with only other sources also aborts.
+    let input = "chr1\t100\t>>\tchr1\t5000\tx\t6\t+\tavg_mapq=60,60;count=Z:3,3\n";
+    assert!(!run_fltcnt(input, &["--src", "B", "--rest", "A"]).status.success());
 }

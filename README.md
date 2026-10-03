@@ -255,8 +255,8 @@ Options:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `-c`, `--min-cnt <INT>` | `3` | Minimum supporting-read count to emit a call. |
-| `-s`, `--min-cnt-strand <INT>` | `1` | Minimum read count on each strand. |
+| `-c`, `--min-cnt <INT>` | `2` | Minimum supporting-read count to emit a call. |
+| `-s`, `--min-cnt-strand <INT>` | `0` | Minimum read count on each strand. |
 | `-w`, `--win-size <INT>` | `100` | Clustering window (bp). |
 | `-A`, `--max-allele <INT>` | `100` | Cap on simultaneously-open clusters. |
 | `-M`, `--max-check <INT>` | `500` | Maximum reads compared per cluster. |
@@ -353,28 +353,34 @@ badclip merge - < sv.txt | badclip fltreg - blacklist.bed.gz > sv.filtered.txt
 
 ## `fltcnt`
 
-Keep `merge` calls with enough read support from the raw and the
-`flteseq`-filtered sources.
+Keep `merge` calls with enough read support from selected sources — by default
+the `flteseq`-filtered (`*.flt`) ones.
 
 ```sh
 badclip fltcnt [OPTIONS] [INPUT]
 ```
 
 - `INPUT` — `merge` output (gzip ok; `-` or omit for stdin).
-- `-c INT` — minimum filtered reads (default 5).
-- `-s INT` — minimum filtered reads on each strand (default 0).
-- `-r INT` — minimum raw reads (default 0).
+- `-c INT` — minimum reads from the `--src` sources (default 5).
+- `-s INT` — minimum `--src` reads on each strand (default 0).
+- `-r INT` — minimum reads from the `--rest` sources (default 0).
 - `-l NUM` — minimum `pos2 - pos1` (columns 5 and 2). Any value `>= 0` also
   drops clips (column 4 = `.`), so the default 0 drops clips only; `-1` disables
   the filter. Inter-contig joins have no distance and pass.
   Accepts a `k`/`m`/`g` suffix, e.g. `-l 100k`, `-l 1m`.
-- `--src-raw STR`, `--src-flt STR` — exact raw/filtered source names.
+- `--src LIST` — comma-separated sources tested by `-c`/`-s` (default: every
+  source ending with `.flt`).
+- `--rest LIST` — comma-separated sources tested by `-r` (default: every source
+  not in `--src`).
 
-The input is expected to merge two sources: the raw breakends, named `*.raw`, and
-the `flteseq -s` survivors, named `*.flt`. Read counts come from the `count=` INFO
-tag (`count=S.flt:f,r|S.raw:f,r`), summed over every matching source. A line
-with neither a raw nor a filtered source aborts the run; name the sources with
-`--src-raw`/`--src-flt` in that case. Survivors are printed verbatim.
+Read counts come from the `count=` INFO tag (`count=S.flt:f,r|S.raw:f,r`); each
+group's counts are summed over its sources. The typical input merges the raw
+breakends (e.g. `S.raw`) with the `flteseq -s S.flt` survivors, so by default
+`-c`/`-s` test the novel `S.flt` reads and `-r` the rest. A line with no source
+in either group (e.g. `merge -m` output, whose `count=` carries no source names)
+aborts the run, and a warning is printed if no line has a `--src` source at all
+(the `*.flt` default doesn't fit — name the sources with `--src`). Survivors are
+printed verbatim.
 
 ```sh
 badclip extract -s S.raw in.bam > S.clip

@@ -2,7 +2,7 @@
 //!
 //! `test/merge01.clip` is a small, deliberately-unsorted `extract`-format input
 //! (exercising the in-memory sort). `test/merge01.expected` is the golden output
-//! under default thresholds, hand-derived from the documented format (NOT diffed
+//! under `-c 3 -s 1` (the former defaults), hand-derived from the documented format (NOT diffed
 //! against `minisv.js merge`, which we intentionally diverge from).
 
 use std::io::Write;
@@ -30,13 +30,25 @@ fn run_merge(args: &[&str]) -> String {
 
 #[test]
 fn merge_basic() {
-    // Default thresholds (-c 3 -s 1): the >> join cluster (A), the clip cluster
-    // (C), and the inversion-pair join cluster (D, with count_fr/count_rf) all
-    // pass; the all-`+` B cluster fails the per-strand filter (0 reads on `-`),
-    // and the singleton readSolo and the 2-read E cluster fail min_cnt.
-    let got = run_merge(&[test_dir().join("merge01.clip").to_str().unwrap()]);
+    // -c 3 -s 1: the >> join cluster (A), the clip cluster (C), and the
+    // inversion-pair join cluster (D, with count_fr/count_rf) all pass; the
+    // all-`+` B cluster fails the per-strand filter (0 reads on `-`), and the
+    // singleton readSolo and the 2-read E cluster fail min_cnt.
+    let p = test_dir().join("merge01.clip");
+    let got = run_merge(&["-c", "3", "-s", "1", p.to_str().unwrap()]);
     let want = std::fs::read_to_string(test_dir().join("merge01.expected")).unwrap();
     assert_eq!(got, want);
+}
+
+#[test]
+fn merge_default_thresholds() {
+    // Defaults (-c 2 -s 0): the golden's three calls plus the one-strand B
+    // cluster and the 2-read E cluster; only the singleton readSolo fails.
+    let got = run_merge(&[test_dir().join("merge01.clip").to_str().unwrap()]);
+    let want = std::fs::read_to_string(test_dir().join("merge01.expected")).unwrap();
+    assert_eq!(got.lines().count(), 5, "{got}");
+    assert!(want.lines().all(|l| got.contains(l)), "golden calls missing:\n{got}");
+    assert!(!got.contains("readSolo"), "{got}");
 }
 
 #[test]
@@ -85,8 +97,7 @@ fn merge_reads_stdin() {
     // `-` reads from stdin, and gives the same result as the file path.
     let bytes = std::fs::read(test_dir().join("merge01.clip")).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
-        .arg("merge")
-        .arg("-")
+        .args(["merge", "-c", "3", "-s", "1", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()

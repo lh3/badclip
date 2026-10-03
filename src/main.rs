@@ -114,11 +114,11 @@ enum Command {
         inputs: Vec<String>,
 
         /// Minimum read count to emit a call.
-        #[arg(short = 'c', long = "min-cnt", default_value_t = 3)]
+        #[arg(short = 'c', long = "min-cnt", default_value_t = 2)]
         min_cnt: i64,
 
         /// Minimum read count on each strand.
-        #[arg(short = 's', long = "min-cnt-strand", default_value_t = 1)]
+        #[arg(short = 's', long = "min-cnt-strand", default_value_t = 0)]
         min_cnt_strand: i64,
 
         /// Clustering window size (bp).
@@ -173,22 +173,22 @@ enum Command {
         margin: i64,
     },
 
-    /// Keep `merge` calls with enough raw and filtered (`flteseq`) read support.
+    /// Keep `merge` calls with enough read support from selected sources.
     Fltcnt {
         /// `merge` output (gzip ok; "-" for stdin).
         input: Option<String>,
 
-        /// Minimum filtered reads.
-        #[arg(short = 'c', long = "min-flt", default_value_t = 5)]
-        min_flt: i64,
+        /// Minimum reads from the --src sources.
+        #[arg(short = 'c', long = "min-src", default_value_t = 5)]
+        min_src: i64,
 
-        /// Minimum filtered reads on each strand.
-        #[arg(short = 's', long = "min-flt-strand", default_value_t = 0)]
-        min_flt_strand: i64,
+        /// Minimum reads from the --src sources on each strand.
+        #[arg(short = 's', long = "min-src-strand", default_value_t = 0)]
+        min_src_strand: i64,
 
-        /// Minimum raw reads.
-        #[arg(short = 'r', long = "min-raw", default_value_t = 0)]
-        min_raw: i64,
+        /// Minimum reads from the --rest sources.
+        #[arg(short = 'r', long = "min-rest", default_value_t = 0)]
+        min_rest: i64,
 
         /// Minimum pos2-pos1 distance (k/m/g suffix ok, e.g. 100k); any value
         /// >= 0 also drops clips, -1 disables the filter.
@@ -196,13 +196,14 @@ enum Command {
               value_parser = parse_num, allow_negative_numbers = true)]
         min_dist: i64,
 
-        /// Raw source name [default: any source ending with ".raw"].
-        #[arg(long = "src-raw")]
-        src_raw: Option<String>,
+        /// Comma-separated sources tested by -c/-s [default: sources ending
+        /// with ".flt"].
+        #[arg(long = "src", value_delimiter = ',')]
+        src: Vec<String>,
 
-        /// Filtered source name [default: any source ending with ".flt"].
-        #[arg(long = "src-flt")]
-        src_flt: Option<String>,
+        /// Comma-separated sources tested by -r [default: sources not in --src].
+        #[arg(long = "rest", value_delimiter = ',')]
+        rest: Vec<String>,
     },
 }
 
@@ -341,24 +342,24 @@ fn main() -> ExitCode {
         }
         Command::Fltcnt {
             input,
-            min_flt,
-            min_flt_strand,
-            min_raw,
+            min_src,
+            min_src_strand,
+            min_rest,
             min_dist,
-            src_raw,
-            src_flt,
+            src,
+            rest,
         } => {
             let Some(input) = input else {
                 return print_subcommand_help("fltcnt");
             };
             fltcnt::run(&FltcntOpts {
                 input,
-                min_flt,
-                min_flt_strand,
-                min_raw,
+                min_src,
+                min_src_strand,
+                min_rest,
                 min_dist,
-                src_raw,
-                src_flt,
+                src,
+                rest,
             })
         }
     };

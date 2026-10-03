@@ -92,8 +92,8 @@ alone). Per-cluster comparisons are capped at `-C` members (a deterministic cap
 replacing minisv's reservoir sampling — deep-cluster counts are capped, not
 scaled), and the active-cluster list is bounded by `-A`.
 
-Flags mirror minisv's kept subset: `-c` min read count (3), `-s` min count on
-each strand (1), `-w` window bp (100), `-A` max active clusters (100), `-M` max
+Flags mirror minisv's kept subset: `-c` min read count (2), `-s` min count on
+each strand (0), `-w` window bp (100), `-A` max active clusters (100), `-M` max
 reads compared per cluster (500). `-Q` (default 20) drops input breakends whose
 `equal` quality is below the threshold before clustering (`parse_rec`); breakends
 without an `equal` tag are kept. `-q` (default 0) drops input breakends whose
@@ -131,7 +131,7 @@ cluster-wide strand totals.
 **Caveat:** the col-8 strand is
 `+`/`-` from join canonicalization (read orientation for clips), not strictly
 read strand, so `-s` is an approximate two-sided-support heuristic. Fixtures:
-`test/merge01.clip` (unsorted input), `test/merge01.expected` (default-threshold
+`test/merge01.clip` (unsorted input), `test/merge01.expected` (`-c 3 -s 1`
 golden).
 
 ### `-m` sample-merge
@@ -193,12 +193,14 @@ No new dependency. Fixture: `test/fltreg01.bed`.
 ## `fltcnt`
 
 `fltcnt [opts] <in>` keeps `merge` (non-`-m`) lines by read support, printing
-survivors verbatim. Counts come from the `count=` tag's `src:f,r` entries: a
-source is **raw** if it ends with `.raw` (or equals `--src-raw`) and **filtered**
-if it ends with `.flt` (or equals `--src-flt`); each kind's `f,r` is summed over
-its matching sources. A line with neither kind (incl. source-less `-m` output)
-**aborts** with an error pointing at `--src-raw`/`--src-flt`. Keep iff filtered
-total `>= -c` (5), filtered `min(f,r) >= -s` (0), raw total `>= -r` (0). `-l`
+survivors verbatim. Counts come from the `count=` tag's `src:f,r` entries, split
+into two groups: `--src` (comma list; default every source ending with `.flt`)
+and `--rest` (comma list; default every source **not** in `--src`); each group's
+`f,r` is summed over its sources (a source in both lists counts in both). A line
+with no source in either group (incl. source-less `-m` output) **aborts**; if no
+line has any `--src` source, a stderr warning is printed at the end. Keep iff
+`--src` total `>= -c` (5), `--src` `min(f,r) >= -s` (0), `--rest` total `>= -r`
+(0). `-l`
 (default 0; `k`/`m`/`g` suffix ok via `main.rs::parse_num`): when `>= 0`, drop
 clips (`ctg2 = "."`), and when positive also same-contig lines with
 `pos2 - pos1 < -l`; inter-contig joins pass. `-l -1` (any negative) disables it. Tests: `tests/fltcnt.rs`.
