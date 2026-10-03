@@ -11,7 +11,7 @@ junctions between chimeric alignments of the same read (*joins*). Joins reveal
 structural rearrangements (translocations, inversions, large indels); clips
 flag reads that end abruptly against nothing.
 
-It has five subcommands, forming a pipeline:
+It has six subcommands, forming a pipeline:
 
 | Subcommand | Purpose |
 |------------|---------|
@@ -20,6 +20,7 @@ It has five subcommands, forming a pipeline:
 | [`flteseq`](#flteseq) | Drop breakends already explained by a pangenome. |
 | [`merge`](#merge) | Cluster per-read breakends into consensus SV calls. |
 | [`fltreg`](#fltreg) | Drop breakends that fall in BED regions. |
+| [`fltcnt`](#fltcnt) | Keep `merge` calls with enough raw/filtered read support. |
 
 Every subcommand reads its input from a file or from stdin via `-`, transparently
 decompresses gzip'd input, and prints its own `--help` (instead of waiting on
@@ -349,11 +350,42 @@ handled).
 badclip merge - < sv.txt | badclip fltreg - blacklist.bed.gz > sv.filtered.txt
 ```
 
+## `fltcnt`
+
+Keep `merge` calls with enough read support from the raw and the
+`flteseq`-filtered sources.
+
+```sh
+badclip fltcnt [OPTIONS] [INPUT]
+```
+
+- `INPUT` — `merge` output (gzip ok; `-` or omit for stdin).
+- `-c INT` — minimum filtered reads (default 5).
+- `-s INT` — minimum filtered reads on each strand (default 0).
+- `-r INT` — minimum raw reads (default 0).
+- `-l NUM` — minimum `pos2 - pos1` (columns 5 and 2). Any value `>= 0` also
+  drops clips (column 4 = `.`), so the default 0 drops clips only; `-1` disables
+  the filter. Inter-contig joins have no distance and pass.
+  Accepts a `k`/`m`/`g` suffix, e.g. `-l 100k`, `-l 1m`.
+- `--src-raw STR`, `--src-flt STR` — exact raw/filtered source names.
+
+The input is expected to merge two sources: the raw breakends, named `*.raw`, and
+the `flteseq -s` survivors, named `*.flt`. Read counts come from the `count=` INFO
+tag (`count=S.flt:f,r|S.raw:f,r`), summed over every matching source. A line
+with neither a raw nor a filtered source aborts the run; name the sources with
+`--src-raw`/`--src-flt` in that case. Survivors are printed verbatim.
+
+```sh
+badclip extract -s S.raw in.bam > S.clip
+badclip flteseq -s S.flt S.clip S.rb3.paf | badclip merge - | badclip fltcnt - > S.sv
+```
+
 ## Status
 
-All five subcommands are implemented: `extract` (SAM/BAM/CRAM auto-detected, or
+All six subcommands are implemented: `extract` (SAM/BAM/CRAM auto-detected, or
 PAF via `--paf`) finds breakends; `geteseq` turns its output into FASTA; `flteseq`
 filters breakends against a pangenome; `merge` clusters them into consensus SV
-calls (with `-m` for a second-level, cross-sample merge); and `fltreg` drops
-breakends in BED regions. See `CLAUDE.md` for internals and the interval/offset
+calls (with `-m` for a second-level, cross-sample merge); `fltreg` drops
+breakends in BED regions; and `fltcnt` keeps calls with enough raw/filtered
+support. See `CLAUDE.md` for internals and the interval/offset
 convention.

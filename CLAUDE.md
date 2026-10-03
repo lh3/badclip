@@ -30,7 +30,8 @@ cargo run -- extract --paf test/join02.paf   # PAF
 - `src/flteseq.rs`— `flteseq` subcommand: filter breakends by pangenome eseq alignment.
 - `src/merge.rs`  — `merge` subcommand: cluster per-read breakends into consensus SV calls.
 - `src/fltreg.rs` — `fltreg` subcommand: drop `extract`/`merge` breakends that fall in BED regions.
-- `tests/extract.rs`, `tests/merge.rs`, `tests/fltreg.rs` — end-to-end tests driving the compiled binary.
+- `src/fltcnt.rs` — `fltcnt` subcommand: keep `merge` calls by raw/filtered source read counts.
+- `tests/extract.rs`, `tests/merge.rs`, `tests/fltreg.rs`, `tests/fltcnt.rs` — end-to-end tests driving the compiled binary.
 - `test/`         — `*.paf` inputs, `*.msv` (minisv) references, `bam01*`/`cram01*`/`flt01*`/`merge01*` fixtures/goldens, `fltreg01.bed`, `minisv.js`.
 
 ## `geteseq`
@@ -187,6 +188,19 @@ contig **sorts by start and merges overlapping/adjacent intervals** into a
 disjoint list; `Regions::contains` then does one `partition_point` binary search
 (the rightmost interval with `start <= p` is the only one that can contain `p`).
 No new dependency. Fixture: `test/fltreg01.bed`.
+
+## `fltcnt`
+
+`fltcnt [opts] <in>` keeps `merge` (non-`-m`) lines by read support, printing
+survivors verbatim. Counts come from the `count=` tag's `src:f,r` entries: a
+source is **raw** if it ends with `.raw` (or equals `--src-raw`) and **filtered**
+if it ends with `.flt` (or equals `--src-flt`); each kind's `f,r` is summed over
+its matching sources. A line with neither kind (incl. source-less `-m` output)
+**aborts** with an error pointing at `--src-raw`/`--src-flt`. Keep iff filtered
+total `>= -c` (5), filtered `min(f,r) >= -s` (0), raw total `>= -r` (0). `-l`
+(default 0; `k`/`m`/`g` suffix ok via `main.rs::parse_num`): when `>= 0`, drop
+clips (`ctg2 = "."`), and when positive also same-contig lines with
+`pos2 - pos1 < -l`; inter-contig joins pass. `-l -1` (any negative) disables it. Tests: `tests/fltcnt.rs`.
 
 ## Interval / offset notation
 

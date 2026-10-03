@@ -3,6 +3,7 @@
 
 mod aln;
 mod extract;
+mod fltcnt;
 mod fltreg;
 mod flteseq;
 mod geteseq;
@@ -17,6 +18,7 @@ use std::process::ExitCode;
 use clap::{CommandFactory, Parser, Subcommand};
 
 use extract::ExtractOpts;
+use fltcnt::FltcntOpts;
 use merge::MergeOpts;
 
 #[derive(Parser)]
@@ -169,6 +171,51 @@ enum Command {
         #[arg(short = 'l', long = "margin", default_value_t = 0)]
         margin: i64,
     },
+
+    /// Keep `merge` calls with enough raw and filtered (`flteseq`) read support.
+    Fltcnt {
+        /// `merge` output (gzip ok; "-" for stdin).
+        input: Option<String>,
+
+        /// Minimum filtered reads.
+        #[arg(short = 'c', long = "min-flt", default_value_t = 5)]
+        min_flt: i64,
+
+        /// Minimum filtered reads on each strand.
+        #[arg(short = 's', long = "min-flt-strand", default_value_t = 0)]
+        min_flt_strand: i64,
+
+        /// Minimum raw reads.
+        #[arg(short = 'r', long = "min-raw", default_value_t = 0)]
+        min_raw: i64,
+
+        /// Minimum pos2-pos1 distance (k/m/g suffix ok, e.g. 100k); any value
+        /// >= 0 also drops clips, -1 disables the filter.
+        #[arg(short = 'l', long = "min-dist", default_value_t = 0,
+              value_parser = parse_num, allow_negative_numbers = true)]
+        min_dist: i64,
+
+        /// Raw source name [default: any source ending with ".raw"].
+        #[arg(long = "src-raw")]
+        src_raw: Option<String>,
+
+        /// Filtered source name [default: any source ending with ".flt"].
+        #[arg(long = "src-flt")]
+        src_flt: Option<String>,
+    },
+}
+
+/// Parse an integer with an optional case-insensitive `k`/`m`/`g` suffix
+/// (×1e3/1e6/1e9), e.g. `100k`, `1m`, `1.5k`.
+fn parse_num(s: &str) -> Result<i64, String> {
+    let (num, mul) = match s.as_bytes().last().map(u8::to_ascii_lowercase) {
+        Some(b'k') => (&s[..s.len() - 1], 1e3),
+        Some(b'm') => (&s[..s.len() - 1], 1e6),
+        Some(b'g') => (&s[..s.len() - 1], 1e9),
+        _ => return s.parse::<i64>().map_err(|e| e.to_string()),
+    };
+    let x: f64 = num.parse().map_err(|_| format!("invalid number `{s}`"))?;
+    Ok((x * mul).round() as i64)
 }
 
 /// Print a subcommand's help (as for `-h`) and return exit code 2. Used when a
@@ -182,6 +229,22 @@ fn print_subcommand_help(name: &str) -> ExitCode {
         let _ = sub.print_help();
     }
     ExitCode::from(2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_num;
+
+    #[test]
+    fn parse_num_suffixes() {
+        assert_eq!(parse_num("0"), Ok(0));
+        assert_eq!(parse_num("250"), Ok(250));
+        assert_eq!(parse_num("100k"), Ok(100_000));
+        assert_eq!(parse_num("1M"), Ok(1_000_000));
+        assert_eq!(parse_num("1.5k"), Ok(1500));
+        assert_eq!(parse_num("2g"), Ok(2_000_000_000));
+        assert!(parse_num("k").is_err() && parse_num("1x").is_err());
+    }
 }
 
 fn main() -> ExitCode {
@@ -274,6 +337,28 @@ fn main() -> ExitCode {
                 return print_subcommand_help("fltreg");
             };
             fltreg::run(&input, &bed, margin)
+        }
+        Command::Fltcnt {
+            input,
+            min_flt,
+            min_flt_strand,
+            min_raw,
+            min_dist,
+            src_raw,
+            src_flt,
+        } => {
+            let Some(input) = input else {
+                return print_subcommand_help("fltcnt");
+            };
+            fltcnt::run(&FltcntOpts {
+                input,
+                min_flt,
+                min_flt_strand,
+                min_raw,
+                min_dist,
+                src_raw,
+                src_flt,
+            })
         }
     };
 
