@@ -199,8 +199,9 @@ and `--rest` (comma list; default every source **not** in `--src`); each group's
 `f,r` is summed over its sources (a source in both lists counts in both). A line
 with no source in either group (incl. source-less `-m` output) **aborts**; if no
 line has any `--src` source, a stderr warning is printed at the end. Keep iff
-`--src` total `>= -c` (5), `--src` `min(f,r) >= -s` (0), `--rest` total `>= -r`
-(0). `-l`
+`--src` total `>= -c` (5), `--src` `min(f,r) >= -s` (0), and `--rest` total
+`<= -r` (0; negative = no cap) — `-r` is a **maximum**, so by default a call
+survives only if all its reads are from `--src` sources. `-l`
 (default 0; `k`/`m`/`g` suffix ok via `main.rs::parse_num`): when `>= 0`, drop
 clips (`ctg2 = "."`), and when positive also same-contig lines with
 `pos2 - pos1 < -l`; inter-contig joins pass. `-l -1` (any negative) disables it. Tests: `tests/fltcnt.rs`.

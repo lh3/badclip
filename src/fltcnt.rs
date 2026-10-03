@@ -10,7 +10,9 @@
 //! has no source labels) is an error.
 //!
 //! A line is printed verbatim if the `--src` reads total `>= -c`, each strand of
-//! the `--src` reads has `>= -s`, and the `--rest` reads total `>= -r`. Unless
+//! the `--src` reads has `>= -s`, and the `--rest` reads total `<= -r` (a
+//! negative `-r` lifts that cap). So by default (`-r 0`) a call survives only if
+//! all of its reads come from `--src` sources. Unless
 //! `-l` is negative, clips (`ctg2 = "."`) and same-contig calls with
 //! `pos2 - pos1 < -l` are also dropped (so the default `-l 0` drops clips only);
 //! inter-contig joins have no distance and pass.
@@ -23,7 +25,7 @@ pub struct FltcntOpts {
     pub input: String,
     pub min_src: i64,
     pub min_src_strand: i64,
-    pub min_rest: i64,
+    pub max_rest: i64,
     pub min_dist: i64,
     /// `--src` names; empty = sources ending with `.flt`.
     pub src: Vec<String>,
@@ -118,7 +120,10 @@ pub fn run(o: &FltcntOpts) -> io::Result<()> {
         seen_src |= src.is_some();
         let (sf, sr) = src.unwrap_or((0, 0));
         let (rf, rr) = rest.unwrap_or((0, 0));
-        if sf + sr < o.min_src || sf.min(sr) < o.min_src_strand || rf + rr < o.min_rest {
+        if sf + sr < o.min_src
+            || sf.min(sr) < o.min_src_strand
+            || (o.max_rest >= 0 && rf + rr > o.max_rest)
+        {
             continue;
         }
         if o.min_dist >= 0 {

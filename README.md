@@ -363,7 +363,8 @@ badclip fltcnt [OPTIONS] [INPUT]
 - `INPUT` — `merge` output (gzip ok; `-` or omit for stdin).
 - `-c INT` — minimum reads from the `--src` sources (default 5).
 - `-s INT` — minimum `--src` reads on each strand (default 0).
-- `-r INT` — minimum reads from the `--rest` sources (default 0).
+- `-r INT` — maximum reads from the `--rest` sources (default 0, i.e. every
+  read must come from `--src`; `-1` = no limit).
 - `-l NUM` — minimum `pos2 - pos1` (columns 5 and 2). Any value `>= 0` also
   drops clips (column 4 = `.`), so the default 0 drops clips only; `-1` disables
   the filter. Inter-contig joins have no distance and pass.
@@ -376,7 +377,8 @@ badclip fltcnt [OPTIONS] [INPUT]
 Read counts come from the `count=` INFO tag (`count=S.flt:f,r|S.raw:f,r`); each
 group's counts are summed over its sources. The typical input merges the raw
 breakends (e.g. `S.raw`) with the `flteseq -s S.flt` survivors, so by default
-`-c`/`-s` test the novel `S.flt` reads and `-r` the rest. A line with no source
+`-c`/`-s` test the novel `S.flt` reads and `-r 0` drops any call that also has
+reads from another source (`S.raw`, or other samples in a multi-sample merge). A line with no source
 in either group (e.g. `merge -m` output, whose `count=` carries no source names)
 aborts the run, and a warning is printed if no line has a `--src` source at all
 (the `*.flt` default doesn't fit — name the sources with `--src`). Survivors are

@@ -44,21 +44,26 @@ chr1\t100\t>>\tchr1\t9000\traw\t8\t+\tavg_mapq=60,60;count=s.raw:4,4
 
 #[test]
 fn fltcnt_counts() {
-    // -l -1 disables the distance/clip filter. Default -c: >= 5 filtered reads.
-    assert_eq!(kept(INPUT, &["-l", "-1"]), ["clip", "near", "far"]);
-    assert_eq!(kept(INPUT, &["-l", "-1", "-c", "0"]).len(), 5);
+    // -l -1 disables the distance/clip filter. Default -r 0: no --rest
+    // (`s.raw`) reads allowed, so only the pure-`s.flt` tra passes -c 0.
+    assert_eq!(kept(INPUT, &["-l", "-1", "-c", "0"]), ["tra"]);
+    assert!(kept(INPUT, &["-l", "-1"]).is_empty());
+    // -r -1 lifts the cap. Default -c: >= 5 filtered reads.
+    assert_eq!(kept(INPUT, &["-l", "-1", "-r", "-1"]), ["clip", "near", "far"]);
+    assert_eq!(kept(INPUT, &["-l", "-1", "-r", "-1", "-c", "0"]).len(), 5);
     // -s: each filtered strand.
-    assert_eq!(kept(INPUT, &["-l", "-1", "-s", "1"]), ["clip", "near"]);
-    // -r: raw reads.
-    assert_eq!(kept(INPUT, &["-l", "-1", "-c", "0", "-r", "3"]), ["clip", "near", "raw"]);
+    assert_eq!(kept(INPUT, &["-l", "-1", "-r", "-1", "-s", "1"]), ["clip", "near"]);
+    // -r: at most this many raw reads.
+    assert_eq!(kept(INPUT, &["-l", "-1", "-c", "0", "-r", "1"]), ["far", "tra"]);
+    assert_eq!(kept(INPUT, &["-l", "-1", "-c", "0", "-r", "3"]), ["clip", "near", "far", "tra"]);
 }
 
 #[test]
 fn fltcnt_min_dist() {
     // Default -l 0 drops clips only.
-    assert_eq!(kept(INPUT, &["-c", "0"]), ["near", "far", "tra", "raw"]);
+    assert_eq!(kept(INPUT, &["-c", "0", "-r", "-1"]), ["near", "far", "tra", "raw"]);
     // Positive -l also drops close same-contig calls; inter-contig joins pass.
-    assert_eq!(kept(INPUT, &["-c", "0", "-l", "100"]), ["far", "tra", "raw"]);
+    assert_eq!(kept(INPUT, &["-c", "0", "-r", "-1", "-l", "100"]), ["far", "tra", "raw"]);
 }
 
 #[test]
@@ -70,17 +75,20 @@ chr1\t100\t>>\tchr1\t5000\tx\t6\t+\tavg_mapq=60,60;count=A:1,1|B:3,3|C:2,0
     let out = run_fltcnt(input, &[]);
     assert!(out.status.success() && out.stdout.is_empty());
     assert!(String::from_utf8_lossy(&out.stderr).contains("--src"));
-    // --src B (6 reads); --rest defaults to A+C (4 reads).
-    assert_eq!(kept(input, &["--src", "B"]), ["x"]);
+    // --src B (6 reads); --rest defaults to A+C (4 reads), over the -r 0 cap.
+    assert!(kept(input, &["--src", "B"]).is_empty());
+    assert!(kept(input, &["--src", "B", "-r", "3"]).is_empty());
     assert_eq!(kept(input, &["--src", "B", "-r", "4"]), ["x"]);
-    assert!(kept(input, &["--src", "B", "-r", "5"]).is_empty());
+    assert_eq!(kept(input, &["--src", "B", "-r", "-1"]), ["x"]);
     // Comma lists: --src A,C has 4 reads (fails -c 5), and C has 0 on reverse.
-    assert!(kept(input, &["--src", "A,C"]).is_empty());
-    assert_eq!(kept(input, &["--src", "A,C", "-c", "4"]), ["x"]);
-    assert!(kept(input, &["--src", "A,C", "-c", "4", "-s", "2"]).is_empty());
-    // Explicit --rest: only A counts (2 reads).
-    assert!(kept(input, &["--src", "B", "--rest", "A", "-r", "3"]).is_empty());
-    assert_eq!(kept(input, &["--src", "B", "--rest", "A,C", "-r", "3"]), ["x"]);
+    assert!(kept(input, &["--src", "A,C", "-r", "-1"]).is_empty());
+    assert_eq!(kept(input, &["--src", "A,C", "-c", "4", "-r", "-1"]), ["x"]);
+    assert!(kept(input, &["--src", "A,C", "-c", "4", "-s", "2", "-r", "-1"]).is_empty());
+    // All sources in --src: nothing left for --rest.
+    assert_eq!(kept(input, &["--src", "A,B,C"]), ["x"]);
+    // Explicit --rest: only A counts (2 reads); C is in neither group.
+    assert!(kept(input, &["--src", "B", "--rest", "A", "-r", "1"]).is_empty());
+    assert_eq!(kept(input, &["--src", "B", "--rest", "A", "-r", "2"]), ["x"]);
 }
 
 #[test]

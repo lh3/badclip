@@ -186,9 +186,10 @@ enum Command {
         #[arg(short = 's', long = "min-src-strand", default_value_t = 0)]
         min_src_strand: i64,
 
-        /// Minimum reads from the --rest sources.
-        #[arg(short = 'r', long = "min-rest", default_value_t = 0)]
-        min_rest: i64,
+        /// Maximum reads from the --rest sources (-1 = no limit).
+        #[arg(short = 'r', long = "max-rest", default_value_t = 0,
+              allow_negative_numbers = true)]
+        max_rest: i64,
 
         /// Minimum pos2-pos1 distance (k/m/g suffix ok, e.g. 100k); any value
         /// >= 0 also drops clips, -1 disables the filter.
@@ -344,7 +345,7 @@ fn main() -> ExitCode {
             input,
             min_src,
             min_src_strand,
-            min_rest,
+            max_rest,
             min_dist,
             src,
             rest,
@@ -356,7 +357,7 @@ fn main() -> ExitCode {
                 input,
                 min_src,
                 min_src_strand,
-                min_rest,
+                max_rest,
                 min_dist,
                 src,
                 rest,
