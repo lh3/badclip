@@ -245,10 +245,11 @@ input into memory and sorts it by `(ctg1, pos1)`, so the input need not be
 pre-sorted.
 
 ```sh
-badclip merge [OPTIONS] [INPUT]
+badclip merge [OPTIONS] [INPUT]...
 ```
 
-- `INPUT` — `extract` output (gzip ok; `-` or omit for stdin).
+- `INPUT` — `extract` output (gzip ok; `-` for stdin). Several files are merged
+  as if concatenated, e.g. `badclip merge a.clip.gz <(badclip flteseq ...)`.
 
 Options:
 

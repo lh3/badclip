@@ -77,8 +77,9 @@ minisv's SVTYPE/SVLEN checks, the `-d` filter, the centromere filter (`-e`), and
 the RT branch (`-r`/`-R`) are all dropped. Unlike minisv (which needs an upstream
 `sort -k1,1 -k2,2n`), `merge` **loads all records into memory and sorts them
 itself** by `(ctg, pos)` — Rust `str` order == `LC_ALL=C sort`; the sort is
-stable so the representative pick is deterministic. Input `-`=stdin, gzip
-auto-detected; no input → help.
+stable so the representative pick is deterministic. Takes one or more inputs,
+read in turn as if concatenated (each `-`=stdin, gzip auto-detected per file);
+no input → help.
 
 Algorithm (`src/merge.rs`): sweep a window of active clusters. Each record joins
 the active cluster whose members it most often matches (`same_sv`), else starts a

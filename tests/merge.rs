@@ -58,6 +58,29 @@ fn merge_thresholds_relax() {
 }
 
 #[test]
+fn merge_multiple_inputs() {
+    // Several inputs are read as if concatenated: the file twice equals its
+    // doubled content on stdin.
+    let path = test_dir().join("merge01.clip");
+    let p = path.to_str().unwrap();
+    let got = run_merge(&["-c", "2", "-s", "0", p, p]);
+    let bytes = std::fs::read(&path).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
+        .args(["merge", "-c", "2", "-s", "0", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn badclip merge");
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(&bytes).unwrap();
+    stdin.write_all(&bytes).unwrap();
+    drop(stdin);
+    let want = String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap();
+    assert!(!got.is_empty());
+    assert_eq!(got, want);
+}
+
+#[test]
 fn merge_reads_stdin() {
     // `-` reads from stdin, and gives the same result as the file path.
     let bytes = std::fs::read(test_dir().join("merge01.clip")).unwrap();

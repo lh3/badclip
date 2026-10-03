@@ -109,8 +109,9 @@ enum Command {
 
     /// Merge per-read `extract` breakends into consensus SV calls.
     Merge {
-        /// `extract` output (gzip ok; "-" for stdin).
-        input: Option<String>,
+        /// `extract` output files, merged as if concatenated (gzip ok; "-" for
+        /// stdin).
+        inputs: Vec<String>,
 
         /// Minimum read count to emit a call.
         #[arg(short = 'c', long = "min-cnt", default_value_t = 3)]
@@ -301,7 +302,7 @@ fn main() -> ExitCode {
             flteseq::run(&extract_out, &rb3_paf, margin, source.as_deref(), min_equal)
         }
         Command::Merge {
-            input,
+            inputs,
             min_cnt,
             min_cnt_strand,
             win_size,
@@ -314,11 +315,11 @@ fn main() -> ExitCode {
             min_cnt_in,
             min_cnt_strand_in,
         } => {
-            let Some(input) = input else {
+            if inputs.is_empty() {
                 return print_subcommand_help("merge");
-            };
+            }
             merge::run(&MergeOpts {
-                input,
+                inputs,
                 min_cnt,
                 min_cnt_strand,
                 win_size,

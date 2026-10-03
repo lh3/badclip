@@ -25,7 +25,8 @@ use crate::io::open_reader;
 /// per-cluster compare cap and the badclip-specific `-m`/`-C`/`-S` filters).
 pub struct MergeOpts {
     /// `extract` output (gzip ok; "-" for stdin).
-    pub input: String,
+    /// Input files, read in turn (as if concatenated).
+    pub inputs: Vec<String>,
     /// Minimum read count to emit a call.
     pub min_cnt: i64,
     /// Minimum read count on each strand.
@@ -460,16 +461,18 @@ pub fn run(opts: &MergeOpts) -> io::Result<()> {
     // so equal-key records keep input order and the representative pick is
     // deterministic.
     let mut recs: Vec<Rec> = Vec::new();
-    for line in open_reader(&opts.input)?.lines() {
-        let line = line?;
-        // `-m`: input is combined `merge` output; otherwise `extract` output.
-        let rec = if opts.merge_input {
-            parse_rec_merge(&line, opts)
-        } else {
-            parse_rec(&line, opts.min_equal, opts.min_mapq, opts.min_mapq_min)
-        };
-        if let Some(r) = rec {
-            recs.push(r);
+    for input in &opts.inputs {
+        for line in open_reader(input)?.lines() {
+            let line = line?;
+            // `-m`: input is combined `merge` output; otherwise `extract` output.
+            let rec = if opts.merge_input {
+                parse_rec_merge(&line, opts)
+            } else {
+                parse_rec(&line, opts.min_equal, opts.min_mapq, opts.min_mapq_min)
+            };
+            if let Some(r) = rec {
+                recs.push(r);
+            }
         }
     }
     recs.sort_by(|a, b| a.ctg.cmp(&b.ctg).then(a.pos.cmp(&b.pos)));
