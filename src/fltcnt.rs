@@ -15,7 +15,8 @@
 //! all of its reads come from `--src` sources. Unless
 //! `-l` is negative, clips (`ctg2 = "."`) and same-contig calls with
 //! `pos2 - pos1 < -l` are also dropped (so the default `-l 0` drops clips only);
-//! inter-contig joins have no distance and pass.
+//! inter-contig joins have no distance and pass. Inversions (`ori` `><`/`<>`)
+//! are exempt from the distance test unless `-I` is given.
 
 use std::io::{self, BufRead, Write};
 
@@ -27,6 +28,8 @@ pub struct FltcntOpts {
     pub min_src_strand: i64,
     pub max_rest: i64,
     pub min_dist: i64,
+    /// Apply `-l` to inversions too.
+    pub inv_dist: bool,
     /// `--src` names; empty = sources ending with `.flt`.
     pub src: Vec<String>,
     /// `--rest` names; empty = sources not in `--src`.
@@ -131,7 +134,9 @@ pub fn run(o: &FltcntOpts) -> io::Result<()> {
             if f.get(3).is_none_or(|&c| c == ".") {
                 continue;
             }
-            if o.min_dist > 0 && f.first() == f.get(3) {
+            // Inversion (`><`/`<>`): distance-exempt unless -I.
+            let inv = f.get(2).is_some_and(|&ori| ori == "><" || ori == "<>");
+            if o.min_dist > 0 && f.first() == f.get(3) && (o.inv_dist || !inv) {
                 let pos = |i: usize| f.get(i).and_then(|s| s.parse::<i64>().ok());
                 if let (Some(p1), Some(p2)) = (pos(1), pos(4)) {
                     if p2 - p1 < o.min_dist {

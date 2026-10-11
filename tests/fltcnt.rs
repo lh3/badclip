@@ -68,6 +68,21 @@ fn fltcnt_min_dist() {
 }
 
 #[test]
+fn fltcnt_inversion_dist() {
+    let input = "\
+chr1\t100\t><\tchr1\t150\tinv1\t6\t+\tavg_mapq=60,60;count=s.flt:3,3
+chr1\t100\t<>\tchr1\t150\tinv2\t6\t+\tavg_mapq=60,60;count=s.flt:3,3
+chr1\t100\t>>\tchr1\t150\tdel\t6\t+\tavg_mapq=60,60;count=s.flt:3,3
+chr1\t100\t>.\t.\t.\tclip\t6\t+\tavg_mapq=60,0;count=s.flt:3,3
+";
+    // Inversions pass -l regardless of distance; clips are still dropped.
+    assert_eq!(kept(input, &["-l", "100"]), ["inv1", "inv2"]);
+    // -I applies -l to inversions too.
+    assert!(kept(input, &["-l", "100", "-I"]).is_empty());
+    assert_eq!(kept(input, &["-l", "50", "-I"]), ["inv1", "inv2", "del"]);
+}
+
+#[test]
 fn fltcnt_explicit_sources() {
     let input = "\
 chr1\t100\t>>\tchr1\t5000\tx\t6\t+\tavg_mapq=60,60;count=A:1,1|B:3,3|C:2,0

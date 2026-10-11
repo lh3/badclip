@@ -204,7 +204,10 @@ line has any `--src` source, a stderr warning is printed at the end. Keep iff
 survives only if all its reads are from `--src` sources. `-l`
 (default 0; `k`/`m`/`g` suffix ok via `main.rs::parse_num`): when `>= 0`, drop
 clips (`ctg2 = "."`), and when positive also same-contig lines with
-`pos2 - pos1 < -l`; inter-contig joins pass. `-l -1` (any negative) disables it. Tests: `tests/fltcnt.rs`.
+`pos2 - pos1 < -l`; inter-contig joins pass. Inversions (`ori` `><`/`<>`) are
+exempt from the distance test (always kept, regardless of `pos2 - pos1`) unless
+`-I` is given, which applies `-l` to them too; clips are still dropped either
+way. `-l -1` (any negative) disables it. Tests: `tests/fltcnt.rs`.
 
 ## Interval / offset notation
 

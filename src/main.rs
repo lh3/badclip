@@ -197,6 +197,11 @@ enum Command {
               value_parser = parse_num, allow_negative_numbers = true)]
         min_dist: i64,
 
+        /// Apply -l to inversions (ori >< or <>) too [default: inversions pass
+        /// regardless of distance].
+        #[arg(short = 'I', long = "inv-dist")]
+        inv_dist: bool,
+
         /// Comma-separated sources tested by -c/-s [default: sources ending
         /// with ".flt"].
         #[arg(long = "src", value_delimiter = ',')]
@@ -347,6 +352,7 @@ fn main() -> ExitCode {
             min_src_strand,
             max_rest,
             min_dist,
+            inv_dist,
             src,
             rest,
         } => {
@@ -359,6 +365,7 @@ fn main() -> ExitCode {
                 min_src_strand,
                 max_rest,
                 min_dist,
+                inv_dist,
                 src,
                 rest,
             })
