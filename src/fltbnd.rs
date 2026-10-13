@@ -1,26 +1,30 @@
-//! The `flteseq` subcommand: filter `extract` breakends by pangenome alignment.
+//! The `fltbnd` subcommand (alias `flteseq`): filter `extract` breakends by
+//! pangenome alignment.
 //!
 //! Given `extract` output and the ropebwt3 `sw` PAF produced by aligning the
-//! `geteseq` FASTA against a pangenome, drop each breakend whose junction is
+//! `getfa` FASTA against a pangenome, drop each breakend whose junction is
 //! already explained by the pangenome. A line is dropped if it lacks an `eseq`
 //! tag, or if some ropebwt3 alignment's query interval spans (contains) the
-//! junction interval on the eseq (extended by `-l` on each side) — meaning the
-//! breakend is "protected" and not novel.
+//! junction interval on an eseq window (extended by `-l` on each side) — meaning
+//! the breakend is "protected" and not novel. An insertion has two windows
+//! (`eseq`, `eseq2`); it is dropped if either junction is spanned.
 //!
-//! The PAF's query names are `geteseq`'s names (`readName_idx_leftFlank_
-//! rightFlank`) in the same order as the `eseq` lines, and a subset of them, so
-//! both files are streamed with a one-line lookahead over the PAF.
+//! The PAF's query names are `getfa`'s names (`readName_idx_leftFlank_
+//! rightFlank_code`) in the same order as the eseq windows, and a subset of
+//! them, so both files are streamed with a one-line lookahead over the PAF.
 //!
 //! With `-s STR` (`source: Some`), the mode flips: every input line is printed,
 //! and the survivors (kept/novel breakends) get their `source=` INFO tag
 //! rewritten to `STR`; dropped lines are printed verbatim with their original
 //! source. This tags novel calls distinctly for a downstream `merge`.
 //!
-//! `-Q` (default 20) additionally drops any line whose `equal` quality is below
-//! the threshold, in both modes (lines without an `equal` tag are kept).
+//! `-Q` (default 20) additionally drops any line whose `equal` quality (the
+//! lower of `equal`/`equal2`) is below the threshold, in both modes (lines
+//! without an `equal` tag are kept).
 
 use std::io::{self, BufRead, Write};
 
+use crate::getfa::parse_windows;
 use crate::io::open_reader;
 
 /// Filter `extract_out` using the ropebwt3 PAF `rb3_paf`; `l` is the margin.
@@ -45,7 +49,8 @@ pub fn run(
 
     for line in clip.lines() {
         let line = line?;
-        let Some((name, lo, hi)) = protected_interval(&line, l) else {
+        let junctions = protected_intervals(&line, l);
+        let Some((junctions, equal)) = junctions.filter(|(j, _)| !j.is_empty()) else {
             // No eseq tag -> dropped. In print-all mode it is still emitted
             // verbatim; it has no PAF entry, so the stream stays in sync.
             if source.is_some() {
@@ -54,37 +59,39 @@ pub fn run(
             continue;
         };
 
-        // Consume the PAF lines belonging to this eseq (same order, subset), and
-        // test whether any spans [lo, hi].
+        // Consume the PAF lines belonging to each eseq window (same order,
+        // subset), and test whether any spans that window's [lo, hi]. Every
+        // window is consumed, even once one is protected, to stay in sync.
         let mut protected = false;
-        loop {
-            if ahead.is_none() {
-                ahead = match paf.next() {
-                    Some(p) => Some(p?),
-                    None => None,
-                };
-            }
-            let matches = ahead
-                .as_deref()
-                .and_then(|p| p.split('\t').next())
-                .is_some_and(|qn| qn == name);
-            if !matches {
-                break;
-            }
-            let p = ahead.take().unwrap();
-            if let Some((qs, qe)) = paf_query_interval(&p)
-                && qs <= lo
-                && qe >= hi
-            {
-                protected = true;
+        for (name, lo, hi) in &junctions {
+            loop {
+                if ahead.is_none() {
+                    ahead = match paf.next() {
+                        Some(p) => Some(p?),
+                        None => None,
+                    };
+                }
+                let matches = ahead
+                    .as_deref()
+                    .and_then(|p| p.split('\t').next())
+                    .is_some_and(|qn| qn == name);
+                if !matches {
+                    break;
+                }
+                let p = ahead.take().unwrap();
+                if let Some((qs, qe)) = paf_query_interval(&p)
+                    && qs <= *lo
+                    && qe >= *hi
+                {
+                    protected = true;
+                }
             }
         }
 
         // -Q: drop low-quality-eseq breakends (in either mode). Done AFTER the
         // PAF consumption above so the one-line lookahead stays in sync no matter
-        // how the PAF was built. A no-eseq line never reaches here (it has no
-        // `equal` tag anyway).
-        if line_equal(&line).is_some_and(|q| q < min_equal) {
+        // how the PAF was built.
+        if equal.is_some_and(|q| q < min_equal) {
             continue;
         }
 
@@ -127,54 +134,30 @@ fn relabel_source(line: &str, src: &str) -> String {
     format!("{rest}\t{}", tags.join(";"))
 }
 
-/// For an `extract` line with an `eseq` tag, return `(fastaName, lo, hi)` — the
-/// geteseq name and the protected junction interval `[lo, hi]` on the eseq.
-fn protected_interval(line: &str, l: i64) -> Option<(String, i64, i64)> {
-    let fields: Vec<&str> = line.split('\t').collect();
-    if fields.len() < 9 {
-        return None;
-    }
-    let qname = fields[5];
+/// A protected junction interval `(fastaName, lo, hi)` on one eseq window.
+type Junction = (String, i64, i64);
 
-    let mut idx = None;
-    let mut elen = None;
-    let mut has_eseq = false;
-    for kv in fields[8].split(';') {
-        if let Some(v) = kv.strip_prefix("idx=") {
-            idx = Some(v);
-        } else if let Some(v) = kv.strip_prefix("elen=") {
-            elen = Some(v);
-        } else if kv.starts_with("eseq=") {
-            has_eseq = true;
-        }
-    }
-    if !has_eseq {
-        return None;
-    }
-
-    let (idx, elen) = (idx?, elen?);
-    let e: Vec<&str> = elen.split(',').collect();
-    if e.len() < 3 {
-        return None;
-    }
-    let e0: i64 = e[0].parse().ok()?;
-    let e1: i64 = e[1].parse().ok()?;
-    let e2: i64 = e[2].parse().ok()?;
-
-    let eseq_len = e0 + e1.abs() + e2;
-    let lo = (e0 - l).max(0);
-    let hi = (e0 + e1.abs() + l).min(eseq_len);
-    // Name matches geteseq: readName_idx_leftFlank_rightFlank.
-    Some((format!("{qname}_{idx}_{e0}_{e2}"), lo, hi))
-}
-
-/// The `equal` (eseq quality) tag of an `extract` line, if present.
-fn line_equal(line: &str) -> Option<i64> {
-    line.split('\t')
-        .nth(8)?
-        .split(';')
-        .find_map(|kv| kv.strip_prefix("equal="))
-        .and_then(|v| v.parse::<i64>().ok())
+/// For an `extract` line, return the protected junction interval of each eseq
+/// window (named as by `getfa`; empty if none), and the
+/// line's `equal` quality (lowest over its windows). `None` for a line `getfa`
+/// cannot parse, treated like one without eseq.
+///
+/// With `elen=e0,e1,e2`, the junction on the eseq is `[e0, e0+|e1|]`, extended
+/// by `l` on each side and clamped to the eseq.
+fn protected_intervals(line: &str, l: i64) -> Option<(Vec<Junction>, Option<i64>)> {
+    let w = parse_windows(line)?;
+    let junctions = w
+        .windows
+        .into_iter()
+        .map(|win| {
+            let [e0, e1, e2] = win.elen;
+            let eseq_len = e0 + e1.abs() + e2;
+            let lo = (e0 - l).max(0);
+            let hi = (e0 + e1.abs() + l).min(eseq_len);
+            (win.name, lo, hi)
+        })
+        .collect();
+    Some((junctions, w.equal))
 }
 
 /// Parse a PAF line's 0-based query interval `(qs, qe)` (columns 3 and 4).

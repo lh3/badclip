@@ -93,7 +93,8 @@ struct Cluster {
 
 /// Parse one `extract` line into a `Rec`; `None` for malformed lines (`< 9`
 /// fields), lines whose col-7 mapq is below `min_mapq`, lines whose `equal`
-/// quality is below `min_equal` (lines lacking an `equal` tag are kept), or
+/// quality (the lower of `equal`/`equal2`) is below `min_equal` (lines lacking
+/// an `equal` tag are kept), or
 /// **join** lines whose smaller per-hit mapq (from the `mapq=` INFO tag) is below
 /// `min_mapq_min` (clips are exempt), consistent with the other subcommands.
 fn parse_rec(line: &str, min_equal: i64, min_mapq: i64, min_mapq_min: i64) -> Option<Rec> {
@@ -130,11 +131,13 @@ fn parse_rec(line: &str, min_equal: i64, min_mapq: i64, min_mapq_min: i64) -> Op
     if pos2.is_some() && mapq1.min(mapq2) < min_mapq_min {
         return None;
     }
-    // Drop low-quality-eseq breakends; keep those without an `equal` tag.
+    // Drop low-quality-eseq breakends; keep those without an `equal` tag. An
+    // insertion has two windows (`equal`, `equal2`); the lower one counts.
     if let Some(q) = f[8]
         .split(';')
-        .find_map(|kv| kv.strip_prefix("equal="))
-        .and_then(|v| v.parse::<i64>().ok())
+        .filter_map(|kv| kv.strip_prefix("equal=").or_else(|| kv.strip_prefix("equal2=")))
+        .filter_map(|v| v.parse::<i64>().ok())
+        .min()
         && q < min_equal
     {
         return None;

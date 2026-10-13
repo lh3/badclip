@@ -3,11 +3,14 @@
 //! Format is autodetected by noodles' `noodles_util` alignment reader
 //! (SAM/BAM/CRAM by magic bytes), so one path serves all three. A read's
 //! chimeric hits are recovered from the primary alignment alone: its `SA:Z:` tag
-//! lists the supplementary alignments. So we iterate primary records only —
-//! skipping secondary and supplementary records (unmapped ones only feed the
-//! end-of-run stats) — and reconstruct
-//! every hit from the primary's CIGAR plus the `SA` entries. This needs no record
-//! grouping, so it works on both name-grouped and coordinate-sorted files.
+//! lists the supplementary alignments. So the trims/splits come from primary
+//! records only — every hit reconstructed from the primary's CIGAR plus the `SA`
+//! entries — while secondary records are skipped and unmapped ones only feed the
+//! end-of-run stats. The `SA` CIGARs are collapsed (indels merged), so long
+//! CIGAR indels (del/ins) come from each record's own CIGAR: a supplementary
+//! record contributes just its own del/ins breakends. Each record is handled on
+//! its own, so this needs no record grouping and works on both name-grouped and
+//! coordinate-sorted files.
 //!
 //! CRAM stores sequences as diffs against a reference, so it requires the
 //! reference genome (`-r`, a faidx-indexed FASTA); the reader decodes each
@@ -15,9 +18,11 @@
 //! `-r`.
 //!
 //! Hit coordinates are computed to match the PAF path exactly (see
-//! [`span_from_ops`]). The only value that can differ from PAF is `aln_len` for
+//! [`span_from_ops`]). Two things can differ from PAF: `aln_len` for
 //! supplementary hits, because minimap2's `SA` CIGAR is collapsed (it merges
-//! small indels); the primary hit uses its full CIGAR and matches PAF.
+//! small indels) — and minimap2's PAF col 11 can differ from a full CIGAR's
+//! M+I+D on alignments with long indels — and insertion positions, which are
+//! normalized with the read sequence (absent from PAF).
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -30,9 +35,9 @@ use noodles_sam::alignment::record::cigar::op::Kind;
 use noodles_sam::alignment::record::data::field::{Tag, Value};
 use noodles_util::alignment;
 
-use crate::extract::{ExtractOpts, Stats, emit_read, passes_filter};
+use crate::extract::{ExtractOpts, SeqView, Stats, emit_gaps, emit_read, passes_filter};
 use crate::io::open_reader;
-use crate::paf::{Hit, Strand};
+use crate::paf::{Gap, Hit, Strand, find_gaps, parse_cigar};
 
 /// Read an alignment file from `input` (`"-"` = stdin), autodetecting
 /// SAM/BAM/CRAM, and emit breakends. CRAM requires `opts.reference` (`-r`).
@@ -119,11 +124,18 @@ fn reference_repository(reference: &str) -> io::Result<fasta::Repository> {
     ))
 }
 
-/// Turn one alignment record into breakends via the shared [`emit_read`].
+/// Turn one alignment record into breakends.
+///
+/// A **primary** record yields the read's trims/splits (from its own hit plus
+/// the `SA` hits) and its own del/ins breakends, via the shared [`emit_read`].
+/// A **supplementary** record yields only its own del/ins breakends: the `SA`
+/// CIGARs are collapsed, so a supplementary indel is visible only here.
+/// Secondary records are ignored.
 ///
 /// `alt` is the set of ALT contig names (`--alt`): a read whose primary hit lands
-/// on an ALT contig is skipped entirely, and ALT hits in the `SA` tag are dropped
-/// before clips/joins are formed.
+/// on an ALT contig is skipped entirely (for a supplementary record, the primary
+/// is the first `SA` entry, by SAM convention), and ALT hits are dropped before
+/// breakends are formed.
 #[allow(clippy::too_many_arguments)]
 fn emit_record(
     record: &dyn Record,
@@ -135,12 +147,15 @@ fn emit_record(
     out: &mut impl Write,
 ) -> io::Result<()> {
     let flags = record.flags()?;
-    if flags.is_secondary() || flags.is_supplementary() {
+    if flags.is_secondary() {
         return Ok(());
     }
+    let supp = flags.is_supplementary();
     // Unmapped primary records only feed the end-of-run stats.
     if flags.is_unmapped() {
-        stats.add_unmapped(record.sequence().len() as i64);
+        if !supp {
+            stats.add_unmapped(record.sequence().len() as i64);
+        }
         return Ok(());
     }
 
@@ -150,7 +165,8 @@ fn emit_record(
     let Some(ctg) = names.get(ref_id) else {
         return Ok(());
     };
-    // Ignore reads whose primary hit lands on an ALT contig.
+    // Ignore reads whose primary hit lands on an ALT contig (and supplementary
+    // hits on ALT contigs).
     if alt.contains(ctg.as_str()) {
         return Ok(());
     }
@@ -178,69 +194,107 @@ fn emit_record(
         .transpose()?
         .map_or(255, |q| q.get() as i64);
 
-    // Primary hit, from the record's own (detailed) CIGAR.
+    // This record's own hit, from its (detailed) CIGAR.
     let mut ops: Vec<(char, i64)> = Vec::new();
     for op in record.cigar().iter() {
         let op = op?;
         ops.push((kind_char(op.kind()), op.len() as i64));
     }
-    let primary = make_hit(qname.clone(), ctg.clone(), pos0, strand, mapq, &ops);
-    let qlen = primary.qlen;
-    // Count the read before any filtering; the primary's query span (qe - qs)
-    // is its contribution to the primary-aligned base total.
-    stats.add_read(qlen, primary.qe - primary.qs);
-    let mut hits = vec![primary];
+    // A supplementary record matters only for its long indels; skip the rest
+    // (incl. decoding its sequence) when it has none.
+    if supp && find_gaps(&ops, 0, pos0, opts.min_gap, None).is_empty() {
+        return Ok(());
+    }
 
     // Supplementary hits, from the SA:Z: tag. Skip supplementary hits on ALT
-    // contigs so they never form clips/joins with the (non-ALT) primary.
+    // contigs so they never form breakends with the (non-ALT) primary.
+    let mut sa_hits = Vec::new();
     if let Some(sa) = sa_tag(record)? {
-        for entry in sa.split(';') {
-            if let Some(hit) = parse_sa_entry(&qname, entry)
-                && !alt.contains(hit.ctg.as_str())
-            {
-                hits.push(hit);
+        for (i, entry) in sa.split(';').enumerate() {
+            let Some(hit) = parse_sa_entry(&qname, entry) else {
+                continue;
+            };
+            if alt.contains(hit.ctg.as_str()) {
+                // A supplementary record's first SA entry is its primary.
+                if supp && i == 0 {
+                    return Ok(());
+                }
+                continue;
             }
+            sa_hits.push(hit);
         }
     }
 
-    // Read sequence on the original read strand, for eseq extraction. The record
-    // SEQ is in alignment orientation (decoded against the reference for CRAM);
-    // reverse-complement it when the primary is reverse-mapped. Only usable when
-    // it spans the whole read (i.e. the primary is soft-, not hard-, clipped).
+    // The stored SEQ (alignment orientation, decoded against the reference for
+    // CRAM) normalizes insertions; its first base is at the leading hard clip.
     let seq: Vec<u8> = record.sequence().iter().collect();
-    let read_fwd: Option<Vec<u8>> = if seq.len() as i64 == qlen {
-        Some(match strand {
-            Strand::Rev => revcomp(&seq),
-            Strand::Fwd => seq,
-        })
-    } else {
-        None
+    let lead_hard = match ops.first() {
+        Some(&('H', len)) => len,
+        _ => 0,
     };
+    let aligned_seq = (!seq.is_empty()).then_some((seq.as_slice(), lead_hard));
+    let gaps = find_gaps(&ops, 0, pos0, opts.min_gap, aligned_seq);
+    let hit = make_hit(qname, ctg.clone(), pos0, strand, mapq, &ops, gaps);
+    let qlen = hit.qlen;
+    if !supp {
+        // Count the read before any filtering; the primary's query span
+        // (qe - qs) is its contribution to the primary-aligned base total.
+        stats.add_read(qlen, hit.qe - hit.qs);
+    }
 
-    // Per-base qualities on the original read strand, for the `equal` tag. Raw
-    // phred values; on the reverse strand they are reversed (NOT complemented) to
-    // stay aligned with `read_fwd`. Absent when QUAL is missing (`*`).
+    // Per-base qualities, raw phred values in the same orientation as SEQ.
+    // Absent when QUAL is missing (`*`).
     let qual: Vec<u8> = record
         .quality_scores()
         .iter()
         .collect::<io::Result<Vec<u8>>>()?;
-    let read_fwd_qual: Option<Vec<u8>> = if qual.len() as i64 == qlen {
-        Some(match strand {
-            Strand::Rev => qual.into_iter().rev().collect(),
-            Strand::Fwd => qual,
-        })
-    } else {
-        None
-    };
+    let view = seq_view(seq, qual, strand, qlen, hit.qs, hit.qe);
 
+    sa_hits.retain(|h| passes_filter(h, opts));
+    if supp {
+        if !passes_filter(&hit, opts) {
+            return Ok(());
+        }
+        let n_aln = 1 + sa_hits.len() as i64;
+        return emit_gaps(out, &hit, n_aln, view.as_ref(), opts);
+    }
+    let mut hits = vec![hit];
     hits.retain(|h| passes_filter(h, opts));
-    emit_read(
-        &mut hits,
-        opts,
-        read_fwd.as_deref(),
-        read_fwd_qual.as_deref(),
-        out,
-    )
+    hits.extend(sa_hits);
+    emit_read(&mut hits, opts, view.as_ref(), out)
+}
+
+/// Orient a record's SEQ/QUAL read-forward (the original read strand): the
+/// record SEQ is in alignment orientation, so reverse-complement it — and
+/// reverse (NOT complement) the qualities — when the record is reverse-mapped.
+/// SEQ must span either the whole read (soft-clipped record; offset 0) or just
+/// the aligned part `|qs,qe|` (hard-clipped; offset `qs`), else `None`. The
+/// qualities are kept only when they match SEQ in length.
+fn seq_view(
+    seq: Vec<u8>,
+    qual: Vec<u8>,
+    strand: Strand,
+    qlen: i64,
+    qs: i64,
+    qe: i64,
+) -> Option<SeqView> {
+    let n = seq.len() as i64;
+    let off = if n == qlen {
+        0
+    } else if n > 0 && n == qe - qs {
+        qs
+    } else {
+        return None;
+    };
+    let qual = (qual.len() == seq.len()).then(|| match strand {
+        Strand::Rev => qual.into_iter().rev().collect(),
+        Strand::Fwd => qual,
+    });
+    let seq = match strand {
+        Strand::Rev => revcomp(&seq),
+        Strand::Fwd => seq,
+    };
+    Some(SeqView { seq, qual, off })
 }
 
 /// Reverse-complement a read sequence (ASCII bases).
@@ -298,10 +352,12 @@ fn parse_sa_entry(qname: &str, entry: &str) -> Option<Hit> {
     let strand = strand_of(f[2] == "-");
     let ops = parse_cigar(f[3]);
     let mapq = f[4].parse::<i64>().ok()?;
-    Some(make_hit(qname.to_string(), ctg, pos0, strand, mapq, &ops))
+    // The SA CIGAR is collapsed (indels merged), so its gaps are unknown.
+    Some(make_hit(qname.to_string(), ctg, pos0, strand, mapq, &ops, Vec::new()))
 }
 
-/// Build a [`Hit`] from a hit's reference start, strand, mapq and CIGAR ops.
+/// Build a [`Hit`] from a hit's reference start, strand, mapq, CIGAR ops and
+/// long indels.
 fn make_hit(
     qname: String,
     ctg: String,
@@ -309,6 +365,7 @@ fn make_hit(
     strand: Strand,
     mapq: i64,
     ops: &[(char, i64)],
+    gaps: Vec<Gap>,
 ) -> Hit {
     let (qs, qe, ts, te, alen, qlen) = span_from_ops(pos0, strand, ops);
     Hit {
@@ -322,6 +379,7 @@ fn make_hit(
         te,
         alen,
         mapq,
+        gaps,
     }
 }
 
@@ -358,21 +416,6 @@ fn span_from_ops(pos0: i64, strand: Strand, ops: &[(char, i64)]) -> (i64, i64, i
     // swap when mapped back to read-forward coordinates.
     let qs = if strand == Strand::Fwd { lead } else { tail };
     (qs, qs + qspan, pos0, pos0 + refspan, alen, qlen)
-}
-
-/// Parse a CIGAR string into `(op_char, len)` pairs.
-fn parse_cigar(s: &str) -> Vec<(char, i64)> {
-    let mut ops = Vec::new();
-    let mut num: i64 = 0;
-    for b in s.bytes() {
-        if b.is_ascii_digit() {
-            num = num * 10 + (b - b'0') as i64;
-        } else {
-            ops.push((b as char, num));
-            num = 0;
-        }
-    }
-    ops
 }
 
 /// Map a noodles CIGAR op kind to its SAM character.

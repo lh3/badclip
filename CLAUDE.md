@@ -23,49 +23,60 @@ cargo run -- extract --paf test/join02.paf   # PAF
 
 - `src/main.rs`   — clap CLI, subcommand dispatch. New subcommands slot in here.
 - `src/io.rs`     — `open_reader`: stdin/file + transparent gzip (magic-byte peek); PAF only.
-- `src/paf.rs`    — `Hit` struct, `Strand`, `parse_paf_line` (keeps only `tp:A:P`).
-- `src/aln.rs`    — SAM/BAM/CRAM input via noodles-util (format autodetected): build `Hit`s from a primary record + its `SA` tag. CRAM needs `-r`.
-- `src/extract.rs`— dispatch (alignment file vs `--paf`), grouping, sorting, clip/join emission; shared `emit_read`/`passes_filter`.
-- `src/geteseq.rs`— `geteseq` subcommand: `extract` output → FASTA of `eseq` records.
-- `src/flteseq.rs`— `flteseq` subcommand: filter breakends by pangenome eseq alignment.
+- `src/paf.rs`    — `Hit`/`Gap` structs, `Strand`, `parse_paf_line` (keeps `tp:A:P`/`I`; gaps from `cg:Z`), `parse_cigar`, `find_gaps` (long CIGAR indels + insertion normalization).
+- `src/aln.rs`    — SAM/BAM/CRAM input via noodles-util (format autodetected): build `Hit`s from a primary record + its `SA` tag; a supplementary record yields only its own gaps. CRAM needs `-r`.
+- `src/extract.rs`— dispatch (alignment file vs `--paf`), grouping, sorting, trim/split/del/ins emission; shared `emit_read`/`emit_gaps`/`passes_filter`, `SeqView`.
+- `src/getfa.rs`  — `getfa` subcommand (alias `geteseq`): `extract` output → FASTA of eseq windows; `parse_windows` is shared with `fltbnd`.
+- `src/fltbnd.rs` — `fltbnd` subcommand (alias `flteseq`): filter breakends by pangenome eseq alignment.
 - `src/merge.rs`  — `merge` subcommand: cluster per-read breakends into consensus SV calls.
 - `src/fltreg.rs` — `fltreg` subcommand: drop `extract`/`merge` breakends that fall in BED regions.
 - `src/fltcnt.rs` — `fltcnt` subcommand: keep `merge` calls by raw/filtered source read counts.
 - `tests/extract.rs`, `tests/merge.rs`, `tests/fltreg.rs`, `tests/fltcnt.rs` — end-to-end tests driving the compiled binary.
-- `test/`         — `*.paf` inputs, `*.msv` (minisv) references, `bam01*`/`cram01*`/`flt01*`/`merge01*` fixtures/goldens, `fltreg01.bed`, `minisv.js`.
+- `test/`         — `*.paf` inputs, `*.msv` (minisv) references, `bam01*`/`cram01*`/`gap01*`/`flt01*`/`merge01*` fixtures/goldens, `fltreg01.bed`, `minisv.js`.
 
-## `geteseq`
+## `getfa`
 
+(Alias `geteseq`, the pre-0.2 name: clap `alias`, hidden from `--help`.)
 Filters `extract` output (TAB-delimited; `-` = stdin, gzip auto-detected; no
-input → print help) to FASTA. For each record with an `eseq` tag it emits
-`>readName_idx_L_R` (from
-the `idx` tag and `elen`'s `leftFlank`/`rightFlank`) followed by the `eseq` bases;
-records lacking `eseq` are skipped. `-Q` (default 20) additionally drops records
-whose `equal` quality is below the threshold; records without an `equal` tag are
-kept. Golden: `test/bam01.fa`.
+input → print help) to FASTA. For each eseq window of a record it emits
+`>readName_idx_L_R_code` (from the `idx` tag and that window's `elen`
+`leftFlank`/`rightFlank`) followed by the bases. `code` is the breakend type:
+`T` trim, `S` split, `D` del, and for an insertion's two windows `L` (`eseq`,
+its first breakpoint along the read) then `R` (`eseq2`). A record without
+`ctype` (pre-0.2 output) is a trim if `ctg2` is `.`, else a split; an unknown
+`ctype` is skipped. Records lacking an eseq are skipped. `-Q` (default 20)
+additionally drops records whose `equal` quality — the lower of
+`equal`/`equal2`, so an insertion emits both windows or neither — is below the
+threshold; records without an `equal` tag are kept. The parser
+(`getfa.rs::parse_windows`) is shared with `fltbnd` so names always agree.
+Golden: `test/bam01.fa`.
 
-## `flteseq`
+## `fltbnd`
 
-Filters `extract` output against a ropebwt3 `sw` PAF (both gzip-ok) of the
-`geteseq` FASTA aligned to a pangenome. Drops a line if it has no `eseq`, or if
-some PAF alignment's query interval `[qs,qe]` (cols 3,4) contains the junction
-interval `[max(0,e0-l), min(e0+|e1|+l, e0+|e1|+e2)]` on the eseq (`elen=e0,e1,e2`,
-`-l` margin, default 50) — the breakend is "protected"/not novel. Survivors are
-printed verbatim. The PAF qname is `geteseq`'s name and its lines are in the same
-order as the `eseq` lines (a subset), so both files stream with a one-line PAF
-lookahead — no in-memory load. Either input may be `-` (stdin); missing input →
-help (via `main.rs::print_subcommand_help`, shared with `extract`/`geteseq`).
-Fixtures: `test/flt01.clip`, `test/flt01.rb3.paf`.
+(Alias `flteseq`, hidden like `geteseq`.) Filters `extract` output against a
+ropebwt3 `sw` PAF (both gzip-ok) of the `getfa` FASTA aligned to a pangenome.
+Drops a line if it has no eseq, or if some PAF alignment's query interval
+`[qs,qe]` (cols 3,4) contains the junction interval
+`[max(0,e0-l), min(e0+|e1|+l, e0+|e1|+e2)]` on one of its eseq windows
+(`elen=e0,e1,e2`, `-l` margin, default 50) — the breakend is "protected"/not
+novel. An insertion has two windows (`_L`, `_R`) and is dropped if **either**
+junction is protected. Survivors are printed verbatim. The PAF qname is
+`getfa`'s name and its lines are in the same order as the FASTA records (a
+subset), so both files stream with a one-line PAF lookahead — no in-memory load;
+every window's PAF lines are consumed even once one is protected, to stay in
+sync. Either input may be `-` (stdin); missing input → help (via
+`main.rs::print_subcommand_help`, shared with `extract`/`getfa`). Fixtures:
+`test/flt01.clip` (no `ctype` — exercises the inference), `test/flt01.rb3.paf`.
 
-`-Q` (default 20) additionally drops any line whose `equal` quality is below the
-threshold (in both modes; lines without an `equal` tag are kept). The check runs
-**after** the PAF lookahead consumes that line's entries, so the stream stays in
-sync regardless of how the PAF was built (`flteseq.rs::line_equal`).
+`-Q` (default 20) additionally drops any line whose `equal` quality (lower of
+`equal`/`equal2`) is below the threshold (in both modes; lines without an
+`equal` tag are kept). The check runs **after** the PAF lookahead consumes that
+line's entries, so the stream stays in sync regardless of how the PAF was built.
 
 `-s STR` flips the mode: print **all** input lines and rewrite the `source=` INFO
 tag to `STR` on the survivors (kept/novel), leaving dropped lines (no `eseq`, or
 pangenome-explained) verbatim — tagging novel calls distinctly for a downstream
-`merge` (`flteseq.rs::relabel_source`). Without `-s`, only survivors are printed
+`merge` (`fltbnd.rs::relabel_source`). Without `-s`, only survivors are printed
 verbatim.
 
 ## `merge`
@@ -90,13 +101,15 @@ and `|pos2−pos2| ≤ -w` **skipped when either `pos2` is absent** (a clip's `.
 mate — reproduces minisv's `NaN` comparison, so clips cluster on `ctg2`/`pos`
 alone). Per-cluster comparisons are capped at `-C` members (a deterministic cap
 replacing minisv's reservoir sampling — deep-cluster counts are capped, not
-scaled), and the active-cluster list is bounded by `-A`.
+scaled), and the active-cluster list is bounded by `-A`. `ctype` is ignored: a
+CIGAR `del` clusters with split-read deletions at the same coordinates, and an
+insertion's `inslen` is not carried into the merged call.
 
 Flags mirror minisv's kept subset: `-c` min read count (2), `-s` min count on
 each strand (0), `-w` window bp (100), `-A` max active clusters (100), `-M` max
 reads compared per cluster (500). `-Q` (default 20) drops input breakends whose
-`equal` quality is below the threshold before clustering (`parse_rec`); breakends
-without an `equal` tag are kept. `-q` (default 0) drops input breakends whose
+`equal` quality (the lower of `equal`/`equal2`) is below the threshold before
+clustering (`parse_rec`); breakends without an `equal` tag are kept. `-q` (default 0) drops input breakends whose
 col-7 mapq (the join's `max`, or a clip's mapq) is below the threshold. `-p`
 (default 10) drops input **join** breakends whose *smaller* per-hit mapq (the
 `min` of the `mapq=` INFO pair) is below the threshold; clips are exempt (their
@@ -204,7 +217,8 @@ line has any `--src` source, a stderr warning is printed at the end. Keep iff
 survives only if all its reads are from `--src` sources. `-l`
 (default 0; `k`/`m`/`g` suffix ok via `main.rs::parse_num`): when `>= 0`, drop
 clips (`ctg2 = "."`), and when positive also same-contig lines with
-`pos2 - pos1 < -l`; inter-contig joins pass. Inversions (`ori` `><`/`<>`) are
+`pos2 - pos1 < -l`; inter-contig joins pass. (An insertion's `pos2 - pos1` is
+only its normalization range `R - L`, so any positive `-l` drops insertions.) Inversions (`ori` `><`/`<>`) are
 exempt from the distance test (always kept, regardless of `pos2 - pos1`) unless
 `-I` is given, which applies `-l` to them too; clips are still dropped either
 way. `-l -1` (any negative) disables it. Tests: `tests/fltcnt.rs`.
@@ -225,13 +239,15 @@ stdin). Both paths build a `Vec<Hit>` per read and feed the shared `emit_read`.
 
 - **PAF** (`src/extract.rs::run_paf`): assumed grouped by read name; streamed and
   buffered per read, keeping `tp:A:P` (primary/supplementary) and `tp:A:I`
-  (inversion), dropping `tp:A:S`. One hit per line.
+  (inversion), dropping `tp:A:S`. One hit per line; its gaps come from `cg:Z`.
 - **Alignment file** (`src/aln.rs::run`): the container (SAM/BAM/CRAM) is
   autodetected by `noodles_util::alignment::io::reader` (magic-byte sniff, works
   on stdin too); records come as `Box<dyn sam::alignment::Record>` and are
-  processed by the trait (one path for all three). Iterate primary records only
-  (skip secondary/supplementary/unmapped). Each read's hits = the primary (from
-  its own CIGAR) + one per `SA:Z:` entry. For paired-end reads the qname gets a
+  processed by the trait (one path for all three). Trims/splits come from
+  primary records only (secondary records are skipped, unmapped ones only feed
+  `Stats`); supplementary records yield just their own del/ins (see below).
+  Each read's hits = the primary (from its own CIGAR) + one per `SA:Z:` entry.
+  For paired-end reads the qname gets a
   `/1` (first segment) or `/2` (last segment) suffix so the two mates are
   distinct; unpaired reads keep the bare name. No grouping needed, so sorted and
   name-grouped files both work. Coordinates are computed to match PAF exactly
@@ -248,24 +264,67 @@ stdin). Both paths build a `Vec<Hit>` per read and feed the shared `emit_read`.
     the first tab-delimited column of the rest is the contig name, so a plain
     one-name-per-line list or a bwa-kit `.alt` SAM both work (gzip ok). A read
     whose **primary** hit lands on an ALT contig is skipped entirely; ALT hits in
-    the `SA` tag are dropped before clips/joins form. No-op for `--paf`.
+    the `SA` tag are dropped before breakends form (a supplementary record on an
+    ALT contig, or whose primary — first `SA` entry — is, is skipped). No-op for
+    `--paf`.
   - noodles crates: util 0.82 (feature `alignment`) / sam 0.87 / core 0.20 /
     cram 0.96 / fasta 0.64.
 
 Within a read, hits are sorted by query start `qs`. Filtering is off by default.
 `-a` drops hits whose alignment block length (PAF col 11, the `alen` field) is
 below a threshold (default 0) — the one **upfront** hit filter (`passes_filter`),
-applied before breakends are formed. The clip threshold is `-c` (default 50).
-`-s` sets the `source=` dataset label (default `foo`), stamped on every record
-(alignment file and PAF).
+applied before breakends are formed. Trims (`ctype=trim`, read ends clipped away
+from every alignment) are emitted only with `-T`; their threshold is `-c`
+(default 50). `-s` sets the `source=` dataset label (default `foo`), stamped on
+every record (alignment file and PAF).
+
+**CIGAR indels (`ctype=del`/`ins`).** Every `I`/`D` op of at least `-g` bases
+(default 1000; `k` suffix ok; `<= 0` disables) becomes a breakend
+(`paf.rs::find_gaps`, stored as `Hit::gaps`). The `SA` CIGAR is collapsed, so
+SA-derived hits carry no gaps; instead each **supplementary record** is read on
+its own (secondary records are skipped) and emits only its own gaps
+(`aln.rs::emit_record`): it is skipped if its contig is ALT, if the SA's first
+entry (its primary, by SAM convention) is ALT, or if its own hit fails `-a`;
+its `n_aln` is self + non-ALT SA hits passing `-a`; it never touches `Stats`;
+gaps are found before its SEQ is decoded, so gap-less records stay cheap. PAF
+gaps come from `cg:Z` (absent → none). With `q` the event's query offset in
+alignment orientation (counting the leading clip) and `t` its reference offset,
+a gap is written like the split an aligner would report for it — `ori` `>>`,
+col 8 = the alignment strand, the one hit standing in for both sides
+(`aln_len=A,A`, `mapq=M,M`, col-7 `M`, `-q` against `M`):
+
+- del: `ctg t >> ctg t+len`, `qlen=q,0,qlen-q`; one window at the read-forward
+  junction `qf = +? q : qlen-q`.
+- ins: `ctg L >> ctg R`, `qlen=q,len,qlen-q-len`, `inslen=len`; windows at the
+  read-forward breakpoints `qa = +? q : qlen-q-len` (`elen/equal/eseq`) and
+  `qa+len` (`elen2/equal2/eseq2`), both on the CIGAR placement.
+
+`idx` for a gap is its read-forward offset (`qf`/`qa`): a read's gaps come from
+several records in any file order, so they can't share the trim/split counter,
+but the offset is unique per read and ctype (so `getfa` names are unique).
+Emission order: a primary record emits trims/splits, then each hit's gaps in
+read-forward order (only its own hit has gaps in BAM; every hit in PAF).
+
+**Insertion normalization** (alignment input only; `find_gaps` with the stored
+SEQ in reference-forward orientation and the leading hard-clip offset). With the
+inserted bases at SEQ `[a,b)`: shift right `k_r` while `seq[a+i]==seq[b+i]`,
+left `k_l` while `seq[a-1-i]==seq[b-1-i]`, each bounded by the run of
+consecutive `M/=/X` ops adjacent to the `I` on that side (so each shifted base
+is one reference base) and stopping at an `N` (case-insensitive compare) or the
+SEQ end. `L = t-k_l`, `R = t+k_r`; a shift may exceed `len` (tandem repeats).
+PAF has no sequence, so its insertions stay at `t >> t`. Deletions are never
+shifted (that needs the deleted reference bases). Unit tests:
+`paf::tests::insertion_*`.
 
 Two **post-filters** drop emitted lines (never alignments) — like their `merge`
 namesakes — so the per-read `idx`/`n_aln` counters are unchanged (dropped
-breakends are simply absent, so `idx` stays a stable per-breakend identifier):
+breakends are simply absent, so `idx` stays a stable per-breakend identifier;
+likewise a trim hidden by the lack of `-T` still takes its `idx`):
 `-Q` (default 0 = keep all) drops breakends whose computed `equal` quality is
-below the threshold (breakends without an `equal` value — no `eseq`, no `QUAL`,
-or PAF — are always kept); `-q` (default 0) drops lines whose col-7 mapq (the
-join's `max`, or a clip's mapq) is below the threshold. Both shrink the output
+below the threshold — for an insertion, if either window's is (breakends
+without an `equal` value — no `eseq`, no `QUAL`, or PAF — are always kept);
+`-q` (default 0) drops lines whose col-7 mapq (the split's `max`, or the one
+hit's mapq for trim/del/ins) is below the threshold. Both shrink the output
 feeding downstream tools. In the `--help` listing `-q` is placed after `-Q` to
 reflect that it is a post-filter.
 
@@ -288,15 +347,20 @@ the long list first, then the array from the top (unit test:
 
 **eseq/elen (alignment-file input only, not PAF).** With the read sequence
 available, each breakend also gets a window around the junction: read-forward
-`[max(lo-f,0), min(hi+f,qlen)]` where `lo=min(y0.qe,y1.qs)`, `hi=max(..)` for a
-join (`lo=hi=p`, the clip point `first.qs`/`last.qe`, for a clip). `-f` (default
-250) is the flank, `-e` (default 1000) the max window.
+`[max(lo-f,off), min(hi+f,off+|SEQ|)]` where `lo=min(y0.qe,y1.qs)`, `hi=max(..)`
+for a split (`lo=hi=p` otherwise: the clip point `first.qs`/`last.qe` for a trim,
+the junction for a del, each breakpoint for an ins). `-f` (default 250) is the
+flank, `-e` (default 1000) the max window (per window).
 `elen=leftFlank,qdist,rightFlank` is always emitted; `eseq=<bases>` is appended
 only when the window `<= -e`. Both are read-forward (NOT flipped with the output,
-unlike `qlen`). `eseq` is on the original read strand: the primary `SEQ`
-reverse-complemented iff the primary is reverse-mapped (`src/aln.rs::revcomp`),
-usable only when `SEQ.len()==qlen` (soft-clipped primary). For CRAM the `SEQ` is
-reconstructed against the `-r` reference. See `src/extract.rs::eseq_info`.
+unlike `qlen`). The record's `SEQ`/`QUAL` become a `SeqView` (`aln.rs::seq_view`):
+reverse-complemented (qualities reversed) iff the record is reverse-mapped
+(`src/aln.rs::revcomp`), covering `|off, off+|SEQ||` — `off=0` when
+`SEQ.len()==qlen` (soft-clipped), `off=qs` when `SEQ.len()==qe-qs` (hard-clipped,
+e.g. a supplementary record), else no view. Trim/split windows need the whole
+read (`off==0`), exactly as before; del/ins windows are clamped to the view.
+For CRAM the `SEQ` is reconstructed against the `-r` reference. See
+`src/extract.rs::eseq_info`.
 
 `equal=<phred>` is the quality of the eseq window, emitted **between `elen` and
 `eseq`** — only when `eseq` is emitted and per-base qualities cover the window
@@ -308,32 +372,37 @@ constant quality `Q` this is `Q`.
 
 ### Alignment file vs PAF parity
 
-For the same alignments the output is identical except `aln_len` of supplementary
-(SA-derived) hits, which is a few bp smaller from a BAM/CRAM because minimap2's
-`SA` CIGAR merges small indels (the primary hit's `aln_len` matches PAF).
-Everything else — line count, offsets, `ori`, `strand`, `qlen`, `mapq`, clip/join
-logic, and inversion (`tp:A:I`) segments — matches exactly. (Verified on the test
-data: both emit 1009 lines; the diff after masking `aln_len` is empty.) BAM and
+For the same alignments the output is identical except (1) `aln_len` of
+supplementary (SA-derived) hits, which is a few bp smaller from a BAM/CRAM
+because minimap2's `SA` CIGAR merges small indels, and of hits with long indels,
+where minimap2's PAF col 11 differs from the CIGAR's M+I+D; and (2) insertion
+positions, normalized only for alignment input (`L <= t <= R`, PAF `t >> t`).
+Everything else — line count, offsets, `ori`, `strand`, `qlen`, `mapq`, `idx`,
+trim/split/del/ins logic, and inversion (`tp:A:I`) segments — matches exactly.
+(Verified on HG002.HiFi-10k.mm2: 1365 lines with `-T` from both, incl. 230 del /
+73 ins; diffs only as above. `tests/extract.rs::gap01_bam_paf_parity`.) BAM and
 CRAM outputs are byte-identical for the same reads (`tests/extract.rs::cram_matches_bam`).
 
 ### Output (9 columns, TAB-delimited)
 
 ```
-ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  source=..;idx=..;n_aln=..;aln_len=..;qlen=..;mapq=..[;elen=..[;equal=..;eseq=..]]
+ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  source=..;ctype=..;idx=..;n_aln=..;aln_len=..;qlen=..;mapq=..[;inslen=..][;elen=..[;equal=..;eseq=..]][;elen2=..[;equal2=..;eseq2=..]]
 ```
 
 `ori` is two characters, each `>`/`<`, or `.` for a missing mate. Tag **order in
 the INFO column is not significant** — every consumer parses by key, not
-position — but the emission order is `source`, `idx`, then three tags keyed to
-**output order** — index 1 tracks `ctg1:pos1`, index 2 tracks `ctg2:pos2` — so
-their values swap with the endpoints when a join is flipped (`source` is
-per-read and `elen`/`eseq`, appended for BAM, do not swap):
+position — but the emission order is `source`, `ctype`, `idx`, `n_aln`, then
+three tags keyed to **output order** — index 1 tracks `ctg1:pos1`, index 2
+tracks `ctg2:pos2` — so their values swap with the endpoints when a split is
+flipped (`source` is per-read and `elen`/`eseq`, appended for BAM, do not swap):
 
 - `source=NAME` — the `-s` dataset label (default `foo`), for telling reads of
   different datasets apart (tumor/normal, trio) downstream; written first purely
   for readability. Same on every record of a run.
-- `idx=N` — 0-based index of this clip/breakend within the read, emission order
-  (left clip, joins, right clip); resets per read (`emit_read`'s local counter).
+- `ctype=TYPE` — `trim` (`-T` only), `split`, `del` or `ins` (see above).
+- `idx=N` — for trim/split, 0-based index within the read in emission order
+  (left trim, splits, right trim), resetting per read (`emit_read`'s local
+  counter; hidden trims still count); for del/ins, the read-forward offset.
 - `n_aln=N` — number of alignments (primary + supplementary) for the read that
   passed the `-q`/`-a` filters, i.e. `hits.len()` at `emit_read`. A read-level
   constant, the same on every breakend of the read.
@@ -348,9 +417,9 @@ per-read and `elen`/`eseq`, appended for BAM, do not swap):
   distinct from the field-7 mapq column, which is `max(y0.mapq, y1.mapq)` for a
   join.
 
-- **Left clip** (`first.qs > c`): `first.ctg fts(first) arrow_l.  .  .  qname mapq strand INFO`
-- **Right clip** (`last.qlen - last.qe > c`): `last.ctg fte(last) arrow_r.  .  .  qname mapq strand INFO`
-- **Join** (each adjacent pair `y0`→`y1`): endpoint `c0 = (y0.ctg, fte(y0), ori(y0), y0.alen)`
+- **Left trim** (`-T`, `first.qs > c`): `first.ctg fts(first) arrow_l.  .  .  qname mapq strand INFO`
+- **Right trim** (`-T`, `last.qlen - last.qe > c`): `last.ctg fte(last) arrow_r.  .  .  qname mapq strand INFO`
+- **Split** (each adjacent pair `y0`→`y1`): endpoint `c0 = (y0.ctg, fte(y0), ori(y0), y0.alen)`
   joins `c1 = (y1.ctg, fts(y1), ori(y1), y1.alen)`. Canonicalize so the smaller
   `(ctg, pos)` is first; if swapped, invert both arrows, swap the two `alen`
   values, the two `mapq` values, and the `qlen` `left`/`right`, and set the
@@ -360,7 +429,8 @@ Helpers: `fts = strand=='+'? ts : te`, `fte = strand=='+'? te : ts`,
 `ori = strand=='+'? '>' : '<'`. Clip arrows: `arrow_l = flip(ori)`,
 `arrow_r = ori`.
 
-Emission order per read: left clip, joins (read order), right clip.
+Emission order per primary record: left trim, splits (read order), right trim,
+then del/ins (read order). A supplementary record emits only its del/ins.
 
 ### Note on `.msv` fixtures
 
@@ -373,10 +443,16 @@ uses PAF col-11 block length in output order. So tests compare against each
 (`test/bam01.bam`, `test/bam01.srt.bam`, three reads) are compared against the
 committed golden output `test/bam01.expected` (eseq bytes verified against
 samtools); `test/bam01.paf` is the single-alignment read used for BAM/PAF parity;
-`test/inv01.paf` is a `tp:A:I` inversion read (two joins).
+`test/inv01.paf` is a `tp:A:I` inversion read (two joins). `bam01.expected` is
+made with `-T`; `tests/extract.rs::trims_off_by_default` checks the default
+output is it minus the trim lines. `test/gap01.bam` (+ `gap01.paf`, golden
+`gap01.expected`) holds every record of four HG002 reads with ≥1 kb CIGAR
+indels, incl. hard-clipped reverse supplementary records; its positions, shifts,
+`qlen` and eseq/equal were checked independently against `samtools view` and the
+FASTQ. `tests/extract.rs::gap_sam` builds synthetic del/ins reads with exact
+expected lines.
 
 ## Not implemented (deliberately, for now)
 
-- CIGAR-based indel (INS/DEL) extraction.
 - Same-contig SV typing (INS/DEL/DUP/INV) and the trailing INFO column — always
   emits `BND`-style orientation regardless of contig.

@@ -3,10 +3,10 @@
 
 mod aln;
 mod extract;
+mod fltbnd;
 mod fltcnt;
 mod fltreg;
-mod flteseq;
-mod geteseq;
+mod getfa;
 #[allow(dead_code)]
 mod iitree;
 mod io;
@@ -51,9 +51,18 @@ enum Command {
         #[arg(short = 's', long = "source", default_value_t = String::from("foo"))]
         source: String,
 
-        /// Minimum clip length to report a clip breakend.
+        /// Minimum clip length to report a trim breakend.
         #[arg(short = 'c', long = "min-clip", default_value_t = 50)]
         min_clip: i64,
+
+        /// Also report trim breakends (read ends clipped away from every
+        /// alignment).
+        #[arg(short = 'T', long = "trim")]
+        trim: bool,
+
+        /// Minimum CIGAR indel length to report a del/ins breakend (0 disables).
+        #[arg(short = 'g', long = "min-gap", default_value_t = 1000, value_parser = parse_num)]
+        min_gap: i64,
 
         /// Drop hits whose alignment block length (PAF col 11) is below this.
         #[arg(short = 'a', long = "min-aln-len", default_value_t = 0)]
@@ -77,7 +86,8 @@ enum Command {
     },
 
     /// Convert `extract` output into a FASTA of extracted breakend sequences.
-    Geteseq {
+    #[command(alias = "geteseq")]
+    Getfa {
         /// Drop records whose eseq quality (`equal` tag) is below this.
         #[arg(short = 'Q', long = "min-equal", default_value_t = 20)]
         min_equal: i64,
@@ -87,7 +97,8 @@ enum Command {
     },
 
     /// Filter `extract` breakends whose eseq is spanned by a pangenome alignment.
-    Flteseq {
+    #[command(alias = "flteseq")]
+    Fltbnd {
         /// Margin extending the protected junction interval on each side.
         #[arg(short = 'l', long = "margin", default_value_t = 50)]
         margin: i64,
@@ -103,7 +114,7 @@ enum Command {
         /// `extract` output (gzip ok; "-" for stdin).
         extract_out: Option<String>,
 
-        /// ropebwt3 `sw` PAF on the `geteseq` FASTA (gzip ok).
+        /// ropebwt3 `sw` PAF on the `getfa` FASTA (gzip ok).
         rb3_paf: Option<String>,
     },
 
@@ -265,6 +276,8 @@ fn main() -> ExitCode {
             alt,
             source,
             min_clip,
+            trim,
+            min_gap,
             min_mapq,
             min_aln_len,
             flank,
@@ -283,6 +296,8 @@ fn main() -> ExitCode {
                 alt,
                 source,
                 min_clip,
+                trim,
+                min_gap,
                 min_mapq,
                 min_aln_len,
                 flank,
@@ -290,13 +305,13 @@ fn main() -> ExitCode {
                 min_equal,
             })
         }
-        Command::Geteseq { min_equal, input } => {
+        Command::Getfa { min_equal, input } => {
             let Some(input) = input else {
-                return print_subcommand_help("geteseq");
+                return print_subcommand_help("getfa");
             };
-            geteseq::run(&input, min_equal)
+            getfa::run(&input, min_equal)
         }
-        Command::Flteseq {
+        Command::Fltbnd {
             margin,
             source,
             min_equal,
@@ -304,9 +319,9 @@ fn main() -> ExitCode {
             rb3_paf,
         } => {
             let (Some(extract_out), Some(rb3_paf)) = (extract_out, rb3_paf) else {
-                return print_subcommand_help("flteseq");
+                return print_subcommand_help("fltbnd");
             };
-            flteseq::run(&extract_out, &rb3_paf, margin, source.as_deref(), min_equal)
+            fltbnd::run(&extract_out, &rb3_paf, margin, source.as_deref(), min_equal)
         }
         Command::Merge {
             inputs,

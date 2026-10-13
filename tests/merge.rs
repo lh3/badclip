@@ -151,6 +151,24 @@ chr1\t1000\t>.\t.\t.\tqlow\t60\t+\tsource=foo;equal=5
 }
 
 #[test]
+fn merge_min_equal_uses_equal2() {
+    // An insertion line carries two eseq windows; -Q tests the lower of
+    // `equal`/`equal2`. ilow's second window is phred 5, so it is dropped.
+    let input = "\
+chr1\t1000\t>>\tchr1\t1004\tifwd\t60\t+\tsource=foo;ctype=ins;mapq=60,60;equal=30;equal2=30
+chr1\t1000\t>>\tchr1\t1004\tirev\t60\t-\tsource=foo;ctype=ins;mapq=60,60;equal=30;equal2=30
+chr1\t1000\t>>\tchr1\t1004\tilow\t60\t+\tsource=foo;ctype=ins;mapq=60,60;equal=30;equal2=5
+";
+    let got = run_merge_stdin(input, &["-c", "1", "-s", "1"]);
+    assert!(
+        got.contains("ifwd") && got.contains("irev") && !got.contains("ilow"),
+        "ilow (equal2=5) should be filtered by default -Q 20:\n{got}"
+    );
+    let all = run_merge_stdin(input, &["-c", "1", "-s", "1", "-Q", "0"]);
+    assert!(all.contains("ilow"), "ilow should survive -Q 0:\n{all}");
+}
+
+#[test]
 fn merge_min_mapq_filters() {
     // Three clips clustering at chr1:1000; qlo has col-7 mapq 5. -q drops input
     // breakends whose col-7 mapq is below the threshold before clustering.

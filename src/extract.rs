@@ -1,33 +1,41 @@
 //! The `extract` subcommand: extract breakends from read alignments.
 //!
 //! A read may map as several chimeric hits. Sorted along the read, each read
-//! end that is soft-clipped away from an alignment produces a *clip* breakend
-//! (connected to nothing), and each junction between two adjacent hits
-//! produces a *join* breakend. All records share one 9-column, TAB-delimited
-//! layout:
+//! end that is soft-clipped away from an alignment produces a *trim* breakend
+//! (connected to nothing; only with `-T`), each junction between two adjacent
+//! hits produces a *split* breakend, and each long indel (`-g`) inside a hit's
+//! CIGAR produces a *del* or *ins* breakend. All records share one 9-column,
+//! TAB-delimited layout:
 //!
 //! ```text
-//! ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  source=..;idx=..;n_aln=..;aln_len=..;qlen=..;mapq=..
+//! ctg1  pos1  ori  ctg2  pos2  qname  mapq  strand  source=..;ctype=..;idx=..;n_aln=..;aln_len=..;qlen=..;mapq=..
 //! ```
 //!
 //! where `ori` is two characters, each `>`/`<`, or `.` for a missing mate. The
 //! INFO column opens with `source=<name>` (the `-s` dataset label; first only
-//! for readability — tag order is not significant), `idx`, and `n_aln` (the
-//! read's alignment count that passed filtering), then three tags:
+//! for readability — tag order is not significant), `ctype` (`trim`, `split`,
+//! `del` or `ins`), `idx`, and `n_aln` (the read's alignment count that passed
+//! filtering), then three tags:
 //! - `aln_len=len1,len2` — alignment block lengths (PAF col 11) of the hits at
-//!   `ctg1:pos1` and `ctg2:pos2`; for a clip `len2` is `0`.
+//!   `ctg1:pos1` and `ctg2:pos2`; for a trim `len2` is `0`.
 //! - `qlen=left,middle,right` — query lengths whose sum is the read length.
 //!   `left` is on the `ctg1:pos1` side, `right` on the `ctg2:pos2` side. For a
-//!   clip, `right` is the clipped length and `middle` is `0`; for a join,
+//!   trim, `right` is the clipped length and `middle` is `0`; for a split,
 //!   `middle` is the (possibly negative) query gap between the two hits.
 //! - `mapq=mapq1,mapq2` — the mapq of each hit, `mapq1` for `ctg1:pos1` and
-//!   `mapq2` for `ctg2:pos2`; for a clip `mapq2` is `0`. (Distinct from the
-//!   field-7 mapq column, which is the `max` of a join's two mapqs.)
+//!   `mapq2` for `ctg2:pos2`; for a trim `mapq2` is `0`. (Distinct from the
+//!   field-7 mapq column, which is the `max` of a split's two mapqs.)
+//!
+//! A del/ins breakend is written like the split an aligner would report for it
+//! (`ctg t >> ctg t+len` for a deletion), with both "hits" being the one
+//! alignment. An insertion is written `ctg L >> ctg R`, its leftmost/rightmost
+//! equivalent placements, and adds `inslen` plus a second eseq window
+//! (`elen2`/`equal2`/`eseq2`) for its second breakpoint on the read.
 
 use std::io::{self, BufRead, Write};
 
 use crate::io::open_reader;
-use crate::paf::{Hit, Strand, parse_paf_line, parse_paf_unmapped};
+use crate::paf::{Gap, Hit, Strand, parse_paf_line, parse_paf_unmapped};
 
 /// Options for `badclip extract`.
 pub struct ExtractOpts {
@@ -41,8 +49,12 @@ pub struct ExtractOpts {
     pub alt: Option<String>,
     /// Dataset name, emitted as the `source=` INFO tag on every record.
     pub source: String,
-    /// Minimum clip length to report a clip breakend.
+    /// Minimum clip length to report a trim breakend.
     pub min_clip: i64,
+    /// Emit trim breakends (read ends clipped away from every alignment).
+    pub trim: bool,
+    /// Minimum CIGAR indel length for a del/ins breakend (`<= 0` disables).
+    pub min_gap: i64,
     /// Drop hits with mapq below this value (0 = keep everything).
     pub min_mapq: i64,
     /// Drop hits whose alignment block length is below this (0 = keep all).
@@ -197,7 +209,7 @@ mod tests {
 
 /// Whether a hit passes the alignment-length filter (`-a`). Note `-q` is NOT
 /// applied here — it is a post-filter on the emitted line's col-7 mapq (see
-/// `emit_clip`/`emit_join`), so it never drops an alignment upfront.
+/// `emit_trim`/`emit_split`/`emit_gap`), so it never drops an alignment upfront.
 pub(crate) fn passes_filter(h: &Hit, opts: &ExtractOpts) -> bool {
     h.alen >= opts.min_aln_len
 }
@@ -236,56 +248,70 @@ fn flip(ori: char) -> char {
     }
 }
 
-/// Build the `;elen=..[;equal=..;eseq=..]` INFO suffix for a breakend window.
+/// A read's sequence (alignment-file input only), oriented read-forward: on the
+/// original read strand, i.e. reverse-complemented (qualities reversed, not
+/// complemented) when the record is reverse-mapped. It covers read-forward
+/// offsets `|off, off+seq.len()|` — the whole read for a soft-clipped record, or
+/// only the aligned part for a hard-clipped one (e.g. a supplementary record).
+pub(crate) struct SeqView {
+    pub seq: Vec<u8>,
+    /// Per-base phred qualities, same orientation and length as `seq`; `None`
+    /// when QUAL is missing (`*`).
+    pub qual: Option<Vec<u8>>,
+    pub off: i64,
+}
+
+/// Build the `;elen{sfx}=..[;equal{sfx}=..;eseq{sfx}=..]` INFO suffix for a
+/// breakend window; `sfx` is `""`, or `"2"` for an insertion's second breakpoint.
 ///
-/// The window spans read-forward query offsets `[lo, hi]` (a single point for a
-/// clip, `qdist == 0`); it is padded by `opts.flank` on each side, clamped to
-/// the read. `elen` is emitted whenever a read sequence is available (alignment
-/// input); `eseq` (the substring `read_seq[start..end]`, on the original read
-/// strand) is appended only when the window is at most `opts.max_eseq` long.
-/// `equal` (the phred quality of that window) precedes `eseq` when per-base
-/// qualities are available. Returns `Some("")` when `read_seq` is `None` (PAF).
+/// The window spans read-forward query offsets `[lo, hi]` (a single point,
+/// `qdist == 0`, except for a split); it is padded by `opts.flank` on each side,
+/// clamped to the bases `view` covers. `elen` is emitted whenever a read sequence
+/// is available (alignment input); `eseq` (on the original read strand) is
+/// appended only when the window is at most `opts.max_eseq` long. `equal` (the
+/// phred quality of that window) precedes `eseq` when per-base qualities are
+/// available.
 ///
-/// Returns `None` to signal the breakend should be dropped: when the computed
-/// `equal` is below `opts.min_equal` (`-Q`, default 0 = keep everything). This is
-/// only reachable for eseq-bearing breakends with base qualities — breakends
-/// without an `equal` value are always kept.
+/// Returns the suffix (empty when `view` is `None`, e.g. PAF) and the window's
+/// `equal`, if computed, for the caller's `-Q` check ([`below_min_equal`]).
 fn eseq_info(
-    read_seq: Option<&[u8]>,
-    read_qual: Option<&[u8]>,
+    view: Option<&SeqView>,
     opts: &ExtractOpts,
-    qlen: i64,
     lo: i64,
     hi: i64,
     qdist: i64,
-) -> Option<String> {
-    let Some(seq) = read_seq else {
-        return Some(String::new());
+    sfx: &str,
+) -> (String, Option<i64>) {
+    let Some(v) = view else {
+        return (String::new(), None);
     };
-    let start = (lo - opts.flank).max(0);
-    let end = (hi + opts.flank).min(qlen);
+    let start = (lo - opts.flank).max(v.off);
+    let end = (hi + opts.flank).min(v.off + v.seq.len() as i64);
     let left = lo - start;
     let right = end - hi;
-    let mut info = format!(";elen={left},{qdist},{right}");
-    if end - start <= opts.max_eseq && start >= 0 && start <= end && (end as usize) <= seq.len() {
-        let (s, e) = (start as usize, end as usize);
+    let mut info = format!(";elen{sfx}={left},{qdist},{right}");
+    let mut equal = None;
+    if end - start <= opts.max_eseq && start <= end {
+        let (s, e) = ((start - v.off) as usize, (end - v.off) as usize);
         // `equal` (phred): mean expected error rate over the window, from the
-        // per-base qualities, scaled back to phred. Only when qualities cover it.
-        if let Some(qual) = read_qual
+        // per-base qualities, scaled back to phred. Only when qualities exist.
+        if let Some(qual) = &v.qual
             && e > s
-            && e <= qual.len()
         {
-            let equal = eseq_qual(&qual[s..e]);
-            // -Q: drop this breakend when its eseq quality is below the threshold.
-            if equal < opts.min_equal {
-                return None;
-            }
-            info.push_str(&format!(";equal={equal}"));
+            let q = eseq_qual(&qual[s..e]);
+            info.push_str(&format!(";equal{sfx}={q}"));
+            equal = Some(q);
         }
-        info.push_str(";eseq=");
-        info.push_str(&String::from_utf8_lossy(&seq[s..e]));
+        info.push_str(&format!(";eseq{sfx}="));
+        info.push_str(&String::from_utf8_lossy(&v.seq[s..e]));
     }
-    Some(info)
+    (info, equal)
+}
+
+/// `-Q`: whether a window's `equal` is below `opts.min_equal` (default 0 = keep
+/// everything), dropping its breakend. Windows without an `equal` value pass.
+fn below_min_equal(equal: Option<i64>, opts: &ExtractOpts) -> bool {
+    equal.is_some_and(|q| q < opts.min_equal)
 }
 
 /// Phred quality of an eseq window: turn each base quality into an error rate,
@@ -340,7 +366,7 @@ fn run_paf(
             stats.add_unmapped(qlen);
             continue;
         }
-        let Some(hit) = parse_paf_line(&line) else {
+        let Some(hit) = parse_paf_line(&line, opts.min_gap) else {
             continue;
         };
         match &mut cur {
@@ -361,28 +387,29 @@ fn run_paf(
             && first.qname != hit.qname
         {
             // PAF carries no read sequence, so eseq/elen/equal are unavailable.
-            emit_read(&mut group, opts, None, None, out)?;
+            emit_read(&mut group, opts, None, out)?;
             group.clear();
         }
         group.push(hit);
     }
-    emit_read(&mut group, opts, None, None, out)?;
+    emit_read(&mut group, opts, None, out)?;
     if let Some((_, qlen, span)) = cur {
         stats.add_read(qlen, span);
     }
     Ok(())
 }
 
-/// Emit clip and join breakends for one read's hits (sorted here by `qs`).
+/// Emit the breakends of one read's hits (sorted here by `qs`): left trim (with
+/// `-T`), splits (read order), right trim (with `-T`), then each hit's del/ins
+/// breakends (read order; only hits whose full CIGAR is known carry gaps).
 ///
-/// `read_seq`, when `Some`, is the read sequence on the original read strand
-/// (alignment input only), enabling the `elen`/`eseq` tags. `read_qual` is the
-/// matching per-base qualities (same orientation), enabling the `equal` tag.
+/// `view`, when `Some`, is the read sequence (alignment input only), enabling
+/// the `elen`/`equal`/`eseq` tags. Trim/split windows need it to cover the whole
+/// read; del/ins windows are clamped to what it covers.
 pub(crate) fn emit_read(
     hits: &mut [Hit],
     opts: &ExtractOpts,
-    read_seq: Option<&[u8]>,
-    read_qual: Option<&[u8]>,
+    view: Option<&SeqView>,
     out: &mut impl Write,
 ) -> io::Result<()> {
     if hits.is_empty() {
@@ -396,42 +423,47 @@ pub(crate) fn emit_read(
 
     let first = &hits[0];
     let last = &hits[hits.len() - 1];
+    // A trim/split window may reach into any part of the read.
+    let full = view.filter(|v| v.off == 0 && v.seq.len() as i64 == first.qlen);
 
-    // `idx` numbers each emitted breakend within this read (0-based, in emission
-    // order: left clip, joins, right clip); it resets for the next read.
+    // `idx` numbers each trim/split breakend within this read (0-based, in
+    // emission order: left trim, splits, right trim); it resets for the next
+    // read. A trim takes its number even when hidden (no -T), so a breakend's
+    // idx does not depend on -T.
     let mut idx = 0i64;
 
-    // Left clip: the read start is clipped and connects to nothing. Its eseq
+    // Left trim: the read start is clipped and connects to nothing. Its eseq
     // window is centered on the clip point (the read start of the first hit).
     if first.qs > opts.min_clip {
-        let arrow = flip(first.ori());
-        emit_clip(
-            out,
-            idx,
-            n_aln,
-            first,
-            first.fts(),
-            arrow,
-            first.qs,
-            first.qs,
-            opts,
-            read_seq,
-            read_qual,
-        )?;
+        if opts.trim {
+            let arrow = flip(first.ori());
+            emit_trim(
+                out,
+                idx,
+                n_aln,
+                first,
+                first.fts(),
+                arrow,
+                first.qs,
+                first.qs,
+                opts,
+                full,
+            )?;
+        }
         idx += 1;
     }
 
-    // Joins between adjacent hits along the read.
+    // Splits between adjacent hits along the read.
     for pair in hits.windows(2) {
-        emit_join(out, idx, n_aln, &pair[0], &pair[1], opts, read_seq, read_qual)?;
+        emit_split(out, idx, n_aln, &pair[0], &pair[1], opts, full)?;
         idx += 1;
     }
 
-    // Right clip: the read end is clipped and connects to nothing. Its eseq
+    // Right trim: the read end is clipped and connects to nothing. Its eseq
     // window is centered on the clip point (the read end of the last hit).
-    if last.qlen - last.qe > opts.min_clip {
+    if opts.trim && last.qlen - last.qe > opts.min_clip {
         let arrow = last.ori();
-        emit_clip(
+        emit_trim(
             out,
             idx,
             n_aln,
@@ -441,23 +473,26 @@ pub(crate) fn emit_read(
             last.qlen - last.qe,
             last.qe,
             opts,
-            read_seq,
-            read_qual,
+            full,
         )?;
     }
 
+    // Long indels inside each hit's CIGAR.
+    for h in hits.iter() {
+        emit_gaps(out, h, n_aln, view, opts)?;
+    }
     Ok(())
 }
 
-/// Emit a clip breakend: a dangling end with no mate (`.` columns).
+/// Emit a trim breakend: a dangling end with no mate (`.` columns).
 ///
 /// `clipped` is the unmapped read length on the dangling side; it becomes the
 /// `right` field of `qlen` (the mate side), with `middle=0` and
 /// `left = qlen - clipped` for the mapped hit at `ctg1:pos1`. `qpos` is the clip
-/// point on the read (`qs` for a left clip, `qe` for a right clip), the center
+/// point on the read (`qs` for a left trim, `qe` for a right trim), the center
 /// of the eseq window.
 #[allow(clippy::too_many_arguments)]
-fn emit_clip(
+fn emit_trim(
     out: &mut impl Write,
     idx: i64,
     n_aln: i64,
@@ -467,20 +502,20 @@ fn emit_clip(
     clipped: i64,
     qpos: i64,
     opts: &ExtractOpts,
-    read_seq: Option<&[u8]>,
-    read_qual: Option<&[u8]>,
+    view: Option<&SeqView>,
 ) -> io::Result<()> {
-    // -q post-filter: drop the line when its col-7 mapq (the clip's mapq) is below
+    // -q post-filter: drop the line when its col-7 mapq (the trim's mapq) is below
     // the threshold. The alignment itself is not dropped upfront.
     if h.mapq < opts.min_mapq {
         return Ok(());
     }
-    let Some(eseq) = eseq_info(read_seq, read_qual, opts, h.qlen, qpos, qpos, 0) else {
+    let (eseq, equal) = eseq_info(view, opts, qpos, qpos, 0, "");
+    if below_min_equal(equal, opts) {
         return Ok(()); // dropped by -Q (low eseq quality)
-    };
+    }
     writeln!(
         out,
-        "{}\t{}\t{}.\t.\t.\t{}\t{}\t{}\tsource={};idx={};n_aln={};aln_len={},0;qlen={},0,{};mapq={},0{}",
+        "{}\t{}\t{}.\t.\t.\t{}\t{}\t{}\tsource={};ctype=trim;idx={};n_aln={};aln_len={},0;qlen={},0,{};mapq={},0{}",
         h.ctg,
         pos,
         arrow,
@@ -498,17 +533,16 @@ fn emit_clip(
     )
 }
 
-/// Emit a join breakend between upstream hit `y0` and downstream hit `y1`.
+/// Emit a split breakend between upstream hit `y0` and downstream hit `y1`.
 #[allow(clippy::too_many_arguments)]
-fn emit_join(
+fn emit_split(
     out: &mut impl Write,
     idx: i64,
     n_aln: i64,
     y0: &Hit,
     y1: &Hit,
     opts: &ExtractOpts,
-    read_seq: Option<&[u8]>,
-    read_qual: Option<&[u8]>,
+    view: Option<&SeqView>,
 ) -> io::Result<()> {
     // Endpoints: read-end side of the upstream hit joins the read-start side
     // of the downstream hit.
@@ -541,7 +575,7 @@ fn emit_join(
     }
 
     let mapq = y0.mapq.max(y1.mapq);
-    // -q post-filter: drop the line when its col-7 mapq (the join's max) is below
+    // -q post-filter: drop the line when its col-7 mapq (the split's max) is below
     // the threshold. Neither alignment is dropped upfront.
     if mapq < opts.min_mapq {
         return Ok(());
@@ -550,12 +584,13 @@ fn emit_join(
     // the junction gap/overlap between the two hits, padded by `flank`.
     let lo = y0.qe.min(y1.qs);
     let hi = y0.qe.max(y1.qs);
-    let Some(eseq) = eseq_info(read_seq, read_qual, opts, y0.qlen, lo, hi, mid) else {
+    let (eseq, equal) = eseq_info(view, opts, lo, hi, mid, "");
+    if below_min_equal(equal, opts) {
         return Ok(()); // dropped by -Q (low eseq quality)
-    };
+    }
     writeln!(
         out,
-        "{}\t{}\t{}{}\t{}\t{}\t{}\t{}\t{}\tsource={};idx={};n_aln={};aln_len={},{};qlen={},{},{};mapq={},{}{}",
+        "{}\t{}\t{}{}\t{}\t{}\t{}\t{}\t{}\tsource={};ctype=split;idx={};n_aln={};aln_len={},{};qlen={},{},{};mapq={},{}{}",
         ctg0,
         pos0,
         o0,
@@ -576,5 +611,96 @@ fn emit_join(
         mq0,
         mq1,
         eseq,
+    )
+}
+
+/// Emit the del/ins breakends of hit `h` in read-forward order; `n_aln` is the
+/// read's alignment count. Called per hit by [`emit_read`], and directly for a
+/// supplementary record, which contributes only its own gaps.
+pub(crate) fn emit_gaps(
+    out: &mut impl Write,
+    h: &Hit,
+    n_aln: i64,
+    view: Option<&SeqView>,
+    opts: &ExtractOpts,
+) -> io::Result<()> {
+    // The CIGAR runs along the reference, i.e. backwards along a reverse read.
+    let mut gaps: Vec<&Gap> = h.gaps.iter().collect();
+    if h.strand == Strand::Rev {
+        gaps.reverse();
+    }
+    for g in gaps {
+        emit_gap(out, h, g, n_aln, view, opts)?;
+    }
+    Ok(())
+}
+
+/// Emit one del/ins breakend from hit `h`'s CIGAR.
+///
+/// It is written like the split an aligner would report for the same event:
+/// `ori` `>>`, the alignment strand in col 8 (what canonicalizing that split
+/// gives), and `h` standing in for both hits (`aln_len=A,A`, `mapq=M,M`, col-7
+/// `M`). With `q` the event's query offset in alignment orientation, `qlen` is
+/// `q,0,qlen-q` (del) or `q,len,qlen-q-len` (ins) in output order.
+///
+/// `idx` is the event's read-forward query offset: a read's gaps come from
+/// several records (primary and supplementary, in any file order), so they
+/// cannot share the trim/split counter, but the offset is unique per read.
+/// - del: `ctg t >> ctg t+len`; one eseq window at the read-forward junction.
+/// - ins: `ctg L >> ctg R` (leftmost/rightmost equivalent placement), `inslen`,
+///   and eseq windows at its two read-forward breakpoints `qa` (`elen`/`equal`/
+///   `eseq`) and `qa+len` (`elen2`/`equal2`/`eseq2`), on the CIGAR placement.
+fn emit_gap(
+    out: &mut impl Write,
+    h: &Hit,
+    g: &Gap,
+    n_aln: i64,
+    view: Option<&SeqView>,
+    opts: &ExtractOpts,
+) -> io::Result<()> {
+    // -q post-filter on the col-7 mapq (the hit's own).
+    if h.mapq < opts.min_mapq {
+        return Ok(());
+    }
+    let fwd = h.strand == Strand::Fwd;
+    let (q, len) = (g.qoff, g.len);
+    let (ctype, pos1, pos2, idx, mid, tags) = if g.ins {
+        let qa = if fwd { q } else { h.qlen - q - len };
+        let (e1, q1) = eseq_info(view, opts, qa, qa, 0, "");
+        let (e2, q2) = eseq_info(view, opts, qa + len, qa + len, 0, "2");
+        if below_min_equal(q1, opts) || below_min_equal(q2, opts) {
+            return Ok(()); // dropped by -Q (low eseq quality)
+        }
+        ("ins", g.tpos_l, g.tpos_r, qa, len, format!(";inslen={len}{e1}{e2}"))
+    } else {
+        let qf = if fwd { q } else { h.qlen - q };
+        let (e, q1) = eseq_info(view, opts, qf, qf, 0, "");
+        if below_min_equal(q1, opts) {
+            return Ok(()); // dropped by -Q (low eseq quality)
+        }
+        ("del", g.tpos, g.tpos + len, qf, 0, e)
+    };
+    writeln!(
+        out,
+        "{}\t{}\t>>\t{}\t{}\t{}\t{}\t{}\tsource={};ctype={};idx={};n_aln={};aln_len={},{};qlen={},{},{};mapq={},{}{}",
+        h.ctg,
+        pos1,
+        h.ctg,
+        pos2,
+        h.qname,
+        h.mapq,
+        h.strand.as_char(),
+        opts.source,
+        ctype,
+        idx,
+        n_aln,
+        h.alen,
+        h.alen,
+        q,
+        mid,
+        h.qlen - q - mid,
+        h.mapq,
+        h.mapq,
+        tags,
     )
 }
