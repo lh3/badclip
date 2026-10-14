@@ -26,7 +26,11 @@ fn run_fltcnt(input: &str, args: &[&str]) -> Output {
 /// Names (col 6 slot reused as a label) of the lines that survive.
 fn kept(input: &str, args: &[&str]) -> Vec<String> {
     let out = run_fltcnt(input, args);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8(out.stdout)
         .unwrap()
         .lines()
@@ -49,22 +53,43 @@ fn fltcnt_counts() {
     assert_eq!(kept(INPUT, &["-l", "-1", "-c", "0"]), ["tra"]);
     assert_eq!(kept(INPUT, &["-l", "-1"]), ["tra"]);
     // -r -1 lifts the cap. Default -c: >= 3 filtered reads.
-    assert_eq!(kept(INPUT, &["-l", "-1", "-r", "-1"]), ["clip", "near", "far", "tra"]);
-    assert_eq!(kept(INPUT, &["-l", "-1", "-r", "-1", "-c", "5"]), ["clip", "near", "far"]);
+    assert_eq!(
+        kept(INPUT, &["-l", "-1", "-r", "-1"]),
+        ["clip", "near", "far", "tra"]
+    );
+    assert_eq!(
+        kept(INPUT, &["-l", "-1", "-r", "-1", "-c", "5"]),
+        ["clip", "near", "far"]
+    );
     assert_eq!(kept(INPUT, &["-l", "-1", "-r", "-1", "-c", "0"]).len(), 5);
     // -s: each filtered strand.
-    assert_eq!(kept(INPUT, &["-l", "-1", "-r", "-1", "-s", "1"]), ["clip", "near"]);
+    assert_eq!(
+        kept(INPUT, &["-l", "-1", "-r", "-1", "-s", "1"]),
+        ["clip", "near"]
+    );
     // -r: at most this many raw reads.
-    assert_eq!(kept(INPUT, &["-l", "-1", "-c", "0", "-r", "1"]), ["far", "tra"]);
-    assert_eq!(kept(INPUT, &["-l", "-1", "-c", "0", "-r", "3"]), ["clip", "near", "far", "tra"]);
+    assert_eq!(
+        kept(INPUT, &["-l", "-1", "-c", "0", "-r", "1"]),
+        ["far", "tra"]
+    );
+    assert_eq!(
+        kept(INPUT, &["-l", "-1", "-c", "0", "-r", "3"]),
+        ["clip", "near", "far", "tra"]
+    );
 }
 
 #[test]
 fn fltcnt_min_dist() {
     // Default -l 0 drops clips only.
-    assert_eq!(kept(INPUT, &["-c", "0", "-r", "-1"]), ["near", "far", "tra", "raw"]);
+    assert_eq!(
+        kept(INPUT, &["-c", "0", "-r", "-1"]),
+        ["near", "far", "tra", "raw"]
+    );
     // Positive -l also drops close same-contig calls; inter-contig joins pass.
-    assert_eq!(kept(INPUT, &["-c", "0", "-r", "-1", "-l", "100"]), ["far", "tra", "raw"]);
+    assert_eq!(
+        kept(INPUT, &["-c", "0", "-r", "-1", "-l", "100"]),
+        ["far", "tra", "raw"]
+    );
 }
 
 #[test]
@@ -104,7 +129,10 @@ chr1\t100\t>>\tchr1\t5000\tx\t6\t+\tavg_mapq=60,60;count=A:1,1|B:3,3|C:2,0
     assert_eq!(kept(input, &["--src", "A,B,C"]), ["x"]);
     // Explicit --rest: only A counts (2 reads); C is in neither group.
     assert!(kept(input, &["--src", "B", "--rest", "A", "-r", "1"]).is_empty());
-    assert_eq!(kept(input, &["--src", "B", "--rest", "A", "-r", "2"]), ["x"]);
+    assert_eq!(
+        kept(input, &["--src", "B", "--rest", "A", "-r", "2"]),
+        ["x"]
+    );
 }
 
 #[test]
@@ -116,5 +144,9 @@ fn fltcnt_no_source_aborts() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("--src"));
     // With explicit lists, a line with only other sources also aborts.
     let input = "chr1\t100\t>>\tchr1\t5000\tx\t6\t+\tavg_mapq=60,60;count=Z:3,3\n";
-    assert!(!run_fltcnt(input, &["--src", "B", "--rest", "A"]).status.success());
+    assert!(
+        !run_fltcnt(input, &["--src", "B", "--rest", "A"])
+            .status
+            .success()
+    );
 }

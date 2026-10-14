@@ -198,8 +198,12 @@ enum Command {
         min_src_strand: i64,
 
         /// Maximum reads from the --rest sources (-1 = no limit).
-        #[arg(short = 'r', long = "max-rest", default_value_t = 0,
-              allow_negative_numbers = true)]
+        #[arg(
+            short = 'r',
+            long = "max-rest",
+            default_value_t = 0,
+            allow_negative_numbers = true
+        )]
         max_rest: i64,
 
         /// Minimum pos2-pos1 distance (k/m/g suffix ok, e.g. 100k); any value

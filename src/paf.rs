@@ -118,7 +118,9 @@ pub fn find_gaps(
                         Some((s, s0)) => {
                             // Lengths of the match runs flanking this op.
                             let run = |it: &mut dyn Iterator<Item = &(char, i64)>| -> i64 {
-                                it.take_while(|(o, _)| is_match_op(*o)).map(|(_, l)| l).sum()
+                                it.take_while(|(o, _)| is_match_op(*o))
+                                    .map(|(_, l)| l)
+                                    .sum()
                             };
                             let max_l = run(&mut ops[..i].iter().rev());
                             let max_r = run(&mut ops[i + 1..].iter());
@@ -175,7 +177,10 @@ fn shift_ins(seq: &[u8], a: i64, len: i64, max_l: i64, max_r: i64) -> (i64, i64)
         kr += 1;
     }
     let mut kl = 0;
-    while kl < max_l && a - 1 - kl >= 0 && same(seq[(a - 1 - kl) as usize], seq[(b - 1 - kl) as usize]) {
+    while kl < max_l
+        && a - 1 - kl >= 0
+        && same(seq[(a - 1 - kl) as usize], seq[(b - 1 - kl) as usize])
+    {
         kl += 1;
     }
     (kl, kr)
@@ -261,7 +266,11 @@ mod tests {
     use super::{find_gaps, parse_cigar};
 
     /// `(ins, tpos, tpos_l, tpos_r, len, qoff)` of each gap.
-    fn gaps(cigar: &str, min_gap: i64, seq: Option<(&[u8], i64)>) -> Vec<(bool, i64, i64, i64, i64, i64)> {
+    fn gaps(
+        cigar: &str,
+        min_gap: i64,
+        seq: Option<(&[u8], i64)>,
+    ) -> Vec<(bool, i64, i64, i64, i64, i64)> {
         find_gaps(&parse_cigar(cigar), 0, 100, min_gap, seq)
             .into_iter()
             .map(|g| (g.ins, g.tpos, g.tpos_l, g.tpos_r, g.len, g.qoff))
@@ -272,7 +281,10 @@ mod tests {
     fn finds_long_indels() {
         // 2S + 10M, then a 5D and a 4I; 1-bp indels stay below -g 3.
         let g = gaps("2S10M5D3M1I3M4I6M1D2M", 3, None);
-        assert_eq!(g, vec![(false, 110, 110, 110, 5, 12), (true, 121, 121, 121, 4, 19)]);
+        assert_eq!(
+            g,
+            vec![(false, 110, 110, 110, 5, 12), (true, 121, 121, 121, 4, 19)]
+        );
         assert!(gaps("2S10M5D3M", 0, None).is_empty(), "-g 0 disables");
     }
 

@@ -110,11 +110,11 @@ struct Rec {
     // absent. Used for the per-end `avg_mapq=q1,q2`.
     mapq1: i64,
     mapq2: i64,
-    strand: u8, // col 7, b'+' or b'-'
-    name: String,      // col 5, qname
-    source: String,    // `source=` INFO tag (col 8); "." if absent
-    ctype: Ctype,      // `ctype=` INFO tag (inferred if absent)
-    inslen: i64,       // `inslen=` INFO tag of an `ins` record; 0 otherwise
+    strand: u8,     // col 7, b'+' or b'-'
+    name: String,   // col 5, qname
+    source: String, // `source=` INFO tag (col 8); "." if absent
+    ctype: Ctype,   // `ctype=` INFO tag (inferred if absent)
+    inslen: i64,    // `inslen=` INFO tag of an `ins` record; 0 otherwise
     // Read counts carried by a `-m` (sample-merge) input line: `fwd`/`rev` summed
     // over the `count=` tag's sources, `fr`/`rf` from `count_fr=`/`count_rf=`. All
     // 0 in extract mode, where write_sv counts members by strand/ori instead.
@@ -179,14 +179,20 @@ fn parse_rec(line: &str, min_equal: i64, min_mapq: i64, min_mapq_min: i64) -> Op
     // insertion has two windows (`equal`, `equal2`); the lower one counts.
     if let Some(q) = f[8]
         .split(';')
-        .filter_map(|kv| kv.strip_prefix("equal=").or_else(|| kv.strip_prefix("equal2=")))
+        .filter_map(|kv| {
+            kv.strip_prefix("equal=")
+                .or_else(|| kv.strip_prefix("equal2="))
+        })
         .filter_map(|v| v.parse::<i64>().ok())
         .min()
         && q < min_equal
     {
         return None;
     }
-    let ctype = Ctype::parse(f[8].split(';').find_map(|kv| kv.strip_prefix("ctype=")), f[3]);
+    let ctype = Ctype::parse(
+        f[8].split(';').find_map(|kv| kv.strip_prefix("ctype=")),
+        f[3],
+    );
     Some(Rec {
         ctg: f[0].to_string(),
         pos: f[1].parse().ok()?,
@@ -205,7 +211,11 @@ fn parse_rec(line: &str, min_equal: i64, min_mapq: i64, min_mapq_min: i64) -> Op
             .unwrap_or(".")
             .to_string(),
         ctype,
-        inslen: if ctype == Ctype::Ins { info_int(f[8], "inslen=") } else { 0 },
+        inslen: if ctype == Ctype::Ins {
+            info_int(f[8], "inslen=")
+        } else {
+            0
+        },
         // Not used in extract mode (write_sv counts members by strand/ori).
         fwd: 0,
         rev: 0,
@@ -477,10 +487,16 @@ fn write_sv(
         .map(|(src, [f, r])| format!("{src}:{f},{r}"))
         .collect::<Vec<_>>()
         .join("|");
-    let mut info = format!("avg_mapq={q1},{q2};count={count};ctype_count={}", join_counts(&per_ctype));
+    let mut info = format!(
+        "avg_mapq={q1},{q2};count={count};ctype_count={}",
+        join_counts(&per_ctype)
+    );
     if n_ins > 0 {
         let avg = (ins_sum as f64 / n_ins as f64).round() as i64;
-        info.push_str(&format!(";avg_inslen={avg};diff_inslen={}", ins_max - ins_min));
+        info.push_str(&format!(
+            ";avg_inslen={avg};diff_inslen={}",
+            ins_max - ins_min
+        ));
     }
     if fr + rf > 0 {
         info.push_str(&format!(";count_fr={fr};count_rf={rf}"));
@@ -492,7 +508,8 @@ fn write_sv(
     // insertion can turn into a spurious translocation), the distinct `ins`
     // reads of the whole input within -w of either printed end, per source.
     if let Some(ins) = ins
-        && s.iter().any(|m| matches!(m.ctype, Ctype::Split | Ctype::Trim))
+        && s.iter()
+            .any(|m| matches!(m.ctype, Ctype::Split | Ctype::Trim))
     {
         let mut ends = vec![(v.ctg.as_str(), v.pos)];
         if let Some(p2) = v.pos2 {
@@ -535,12 +552,7 @@ fn write_sv(
 /// number of distinct **sources** (samples) in the cluster. Output is itself
 /// `-m`-parseable, so merges can be chained (though it carries no source labels,
 /// so a chained pass falls back to member count for col-7).
-fn write_sv_merge(
-    out: &mut impl Write,
-    s: &[Rec],
-    v: &Rec,
-    opts: &MergeOpts,
-) -> io::Result<()> {
+fn write_sv_merge(out: &mut impl Write, s: &[Rec], v: &Rec, opts: &MergeOpts) -> io::Result<()> {
     let (mut mapq1_sum, mut mapq2_sum) = (0i64, 0i64);
     let (mut fwd, mut rev, mut fr, mut rf) = (0i64, 0i64, 0i64, 0i64);
     let mut src_set: std::collections::HashSet<&str> = std::collections::HashSet::new();
@@ -587,14 +599,7 @@ fn write_sv_merge(
     writeln!(
         out,
         "{}\t{}\t{}\t{}\t{}\t.\t{}\t{}\t{}",
-        v.ctg,
-        v.pos,
-        ori,
-        v.ctg2,
-        pos2,
-        n_src,
-        v.strand as char,
-        info,
+        v.ctg, v.pos, ori, v.ctg2, pos2, n_src, v.strand as char, info,
     )
 }
 

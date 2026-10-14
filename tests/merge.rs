@@ -47,7 +47,10 @@ fn merge_default_thresholds() {
     let got = run_merge(&[test_dir().join("merge01.clip").to_str().unwrap()]);
     let want = std::fs::read_to_string(test_dir().join("merge01.expected")).unwrap();
     assert_eq!(got.lines().count(), 5, "{got}");
-    assert!(want.lines().all(|l| got.contains(l)), "golden calls missing:\n{got}");
+    assert!(
+        want.lines().all(|l| got.contains(l)),
+        "golden calls missing:\n{got}"
+    );
     assert!(!got.contains("readSolo"), "{got}");
 }
 
@@ -197,8 +200,14 @@ fn merge_ctype_count() {
     .concat();
     let got = run_merge_stdin(&input, &[]);
     assert_eq!(got.lines().count(), 1, "{got}");
-    assert!(got.contains("\t3\t") && got.contains(";ctype_count=del:2|split:1;"), "{got}");
-    assert!(!got.contains("avg_inslen") && !got.contains("ins_nearby"), "{got}");
+    assert!(
+        got.contains("\t3\t") && got.contains(";ctype_count=del:2|split:1;"),
+        "{got}"
+    );
+    assert!(
+        !got.contains("avg_inslen") && !got.contains("ins_nearby"),
+        "{got}"
+    );
 }
 
 #[test]
@@ -211,17 +220,46 @@ chr1\t500\t>>\tchr2\t50\tj1\t60\t+\tsource=foo;mapq=60,60
 chr1\t505\t>>\tchr2\t55\tj2\t60\t-\tsource=foo;mapq=60,60
 ";
     let got = run_merge_stdin(input, &[]);
-    assert_eq!(tag_of(&got, "chr1\t10", "ctype_count").as_deref(), Some("trim:2"), "{got}");
-    assert_eq!(tag_of(&got, "chr1\t50", "ctype_count").as_deref(), Some("split:2"), "{got}");
+    assert_eq!(
+        tag_of(&got, "chr1\t10", "ctype_count").as_deref(),
+        Some("trim:2"),
+        "{got}"
+    );
+    assert_eq!(
+        tag_of(&got, "chr1\t50", "ctype_count").as_deref(),
+        Some("split:2"),
+        "{got}"
+    );
 }
 
 #[test]
 fn merge_inslen_stats() {
     // avg_inslen (rounded mean) and diff_inslen (max - min) over the ins reads.
     let input = [
-        rec("chr1\t5000\t>>\tchr1\t5004", "i1", '+', "foo", "ins", ";inslen=1000"),
-        rec("chr1\t5002\t>>\tchr1\t5004", "i2", '-', "foo", "ins", ";inslen=1200"),
-        rec("chr1\t5000\t>>\tchr1\t5006", "i3", '+', "foo", "ins", ";inslen=1101"),
+        rec(
+            "chr1\t5000\t>>\tchr1\t5004",
+            "i1",
+            '+',
+            "foo",
+            "ins",
+            ";inslen=1000",
+        ),
+        rec(
+            "chr1\t5002\t>>\tchr1\t5004",
+            "i2",
+            '-',
+            "foo",
+            "ins",
+            ";inslen=1200",
+        ),
+        rec(
+            "chr1\t5000\t>>\tchr1\t5006",
+            "i3",
+            '+',
+            "foo",
+            "ins",
+            ";inslen=1101",
+        ),
     ]
     .concat();
     let got = run_merge_stdin(&input, &[]);
@@ -242,9 +280,30 @@ fn merge_ins_nearby() {
     // A call prints its upper-middle member's coordinates, which are the ends
     // tested.
     let input = [
-        rec("chr1\t4990\t>>\tchr1\t5010", "i1", '+', "N", "ins", ";inslen=3000"),
-        rec("chr1\t4995\t>>\tchr1\t5010", "i2", '-', "N", "ins", ";inslen=3005"),
-        rec("chr1\t5060\t>>\tchr1\t5120", "i3", '+', "T", "ins", ";inslen=3001"),
+        rec(
+            "chr1\t4990\t>>\tchr1\t5010",
+            "i1",
+            '+',
+            "N",
+            "ins",
+            ";inslen=3000",
+        ),
+        rec(
+            "chr1\t4995\t>>\tchr1\t5010",
+            "i2",
+            '-',
+            "N",
+            "ins",
+            ";inslen=3005",
+        ),
+        rec(
+            "chr1\t5060\t>>\tchr1\t5120",
+            "i3",
+            '+',
+            "T",
+            "ins",
+            ";inslen=3001",
+        ),
         rec("chr1\t5100\t>>\tchr2\t300", "t1", '+', "T", "split", ""),
         rec("chr1\t5105\t>>\tchr2\t305", "t2", '-', "T", "split", ""),
         rec("chr1\t6200\t>>\tchr3\t300", "f1", '+', "T", "split", ""),
@@ -258,18 +317,30 @@ fn merge_ins_nearby() {
     let got = run_merge_stdin(&input, &[]);
     assert!(!got.contains("i3"), "i3's own cluster fails -c 2:\n{got}");
     // 5105 is within 100 of i1/i2 ([4990,5010], [4995,5010]) and of i3.
-    assert_eq!(tag_of(&got, "chr1\t5105\t>>", "ins_nearby").as_deref(), Some("N:2|T:1"), "{got}");
+    assert_eq!(
+        tag_of(&got, "chr1\t5105\t>>", "ins_nearby").as_deref(),
+        Some("N:2|T:1"),
+        "{got}"
+    );
     // 1 kb away: nothing nearby, no tag.
     assert!(got.contains("chr1\t6205\t>>"), "{got}");
     assert_eq!(tag_of(&got, "chr1\t6205\t>>", "ins_nearby"), None, "{got}");
     // End 5000 is near i1, i2 and i3; end 5200 near i3 again, which counts once.
-    assert_eq!(tag_of(&got, "chr1\t5000\t<<", "ins_nearby").as_deref(), Some("N:2|T:1"), "{got}");
+    assert_eq!(
+        tag_of(&got, "chr1\t5000\t<<", "ins_nearby").as_deref(),
+        Some("N:2|T:1"),
+        "{got}"
+    );
     // A pure del call gets no ins_nearby.
     assert!(got.contains("chr1\t5003\t>>\tchr1\t20002"), "{got}");
     assert_eq!(tag_of(&got, "chr1\t5003\t>>", "ins_nearby"), None, "{got}");
     // -w 50: 5105 is now within 50 of i3 only.
     let got = run_merge_stdin(&input, &["-w", "50"]);
-    assert_eq!(tag_of(&got, "chr1\t5105\t>>", "ins_nearby").as_deref(), Some("T:1"), "{got}");
+    assert_eq!(
+        tag_of(&got, "chr1\t5105\t>>", "ins_nearby").as_deref(),
+        Some("T:1"),
+        "{got}"
+    );
 }
 
 #[test]
@@ -289,7 +360,10 @@ chr1\t1000\t>.\t.\t.\tqlo\t5\t+\tsource=foo
     );
     // Default -q 0 keeps everything, so qlo appears.
     let all = run_merge_stdin(input, &["-c", "1", "-s", "1"]);
-    assert!(all.contains("qlo"), "qlo should survive default -q 0:\n{all}");
+    assert!(
+        all.contains("qlo"),
+        "qlo should survive default -q 0:\n{all}"
+    );
 }
 
 #[test]
@@ -372,12 +446,24 @@ chr2\t2005\t<>\tchr2\t2795\t.\t6\t-\tavg_mapq=60,60;count=sB:2,4;count_fr=2;coun
     // chr2 inversion: count_fr/count_rf summed from input (6+2, 0+4); fr*rf != 0
     // so no foldback despite ctg1==ctg2; col-7 = 2 sources.
     assert!(
-        got.contains("chr2\t2005\t<>\tchr2\t2795\t.\t2\t-\tavg_mapq=60,60;count=5,7;count_fr=8;count_rf=4"),
+        got.contains(
+            "chr2\t2005\t<>\tchr2\t2795\t.\t2\t-\tavg_mapq=60,60;count=5,7;count_fr=8;count_rf=4"
+        ),
         "chr2 inversion sample-merge line wrong:\n{got}"
     );
-    assert!(!got.contains("foldback"), "unexpected foldback (fr*rf != 0):\n{got}");
-    assert!(!got.contains("reads="), "-m output must not carry a reads= tag:\n{got}");
-    assert_eq!(got.lines().count(), 2, "expected two merged clusters:\n{got}");
+    assert!(
+        !got.contains("foldback"),
+        "unexpected foldback (fr*rf != 0):\n{got}"
+    );
+    assert!(
+        !got.contains("reads="),
+        "-m output must not carry a reads= tag:\n{got}"
+    );
+    assert_eq!(
+        got.lines().count(),
+        2,
+        "expected two merged clusters:\n{got}"
+    );
 }
 
 #[test]
@@ -391,7 +477,11 @@ chr3\t3005\t>.\t.\t.\t.\t5\t+\tavg_mapq=40,0;count=sC:2,2
 ";
     // Defaults -C 3 -S 1: only sC survives parsing -> one cluster, count=2,2.
     let got = run_merge_stdin(input, &["-m"]);
-    assert_eq!(got.lines().count(), 1, "only sC should survive -C/-S:\n{got}");
+    assert_eq!(
+        got.lines().count(),
+        1,
+        "only sC should survive -C/-S:\n{got}"
+    );
     assert!(got.contains("count=2,2"), "surviving cluster wrong:\n{got}");
     // -C 0 -S 0 keeps all three; they cluster into one: fwd=1+5+2=8, rev=0+0+2=2,
     // col-7 = 3 distinct sources (sA, sB, sC).

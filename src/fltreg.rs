@@ -45,7 +45,9 @@ impl Regions {
                 continue;
             };
             if let (Ok(s), Ok(e)) = (s.parse::<i64>(), e.parse::<i64>()) {
-                map.entry(chrom.to_string()).or_default().push((s - margin, e + margin));
+                map.entry(chrom.to_string())
+                    .or_default()
+                    .push((s - margin, e + margin));
             }
         }
         // Sort by start and merge overlapping/adjacent intervals so each contig's

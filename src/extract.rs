@@ -194,12 +194,12 @@ mod tests {
         let cases: &[&[i64]] = &[
             &[],
             &[100],
-            &[14807, 16920, 17508],          // the bam01 fixture lengths
-            &[10, 10, 10, 10],               // threshold inside one bin
-            &[m + 5000],                     // a single long read
-            &[m + 5000, m + 5000, 10000],    // N50 among the long reads
+            &[14807, 16920, 17508],           // the bam01 fixture lengths
+            &[10, 10, 10, 10],                // threshold inside one bin
+            &[m + 5000],                      // a single long read
+            &[m + 5000, m + 5000, 10000],     // N50 among the long reads
             &[m + 5000, 50000, 50000, 50000], // N50 crosses into the short array
-            &[m, m + 1],                     // boundary lengths
+            &[m, m + 1],                      // boundary lengths
         ];
         for lens in cases {
             assert_eq!(stats_n50(lens), naive_n50(lens), "lens={lens:?}");
@@ -318,10 +318,7 @@ fn below_min_equal(equal: Option<i64>, opts: &ExtractOpts) -> bool {
 /// average the expected errors over the window, and scale back to phred —
 /// `-10 * log10( (Σ 10^(-q/10)) / L )`, rounded. For constant `q` this is `q`.
 fn eseq_qual(quals: &[u8]) -> i64 {
-    let expected_errors: f64 = quals
-        .iter()
-        .map(|&q| 10f64.powf(-(q as f64) / 10.0))
-        .sum();
+    let expected_errors: f64 = quals.iter().map(|&q| 10f64.powf(-(q as f64) / 10.0)).sum();
     let mean = expected_errors / quals.len() as f64;
     (-10.0 * mean.log10()).round() as i64
 }
@@ -671,7 +668,14 @@ fn emit_gap(
         if below_min_equal(q1, opts) || below_min_equal(q2, opts) {
             return Ok(()); // dropped by -Q (low eseq quality)
         }
-        ("ins", g.tpos_l, g.tpos_r, qa, len, format!(";inslen={len}{e1}{e2}"))
+        (
+            "ins",
+            g.tpos_l,
+            g.tpos_r,
+            qa,
+            len,
+            format!(";inslen={len}{e1}{e2}"),
+        )
     } else {
         let qf = if fwd { q } else { h.qlen - q };
         let (e, q1) = eseq_info(view, opts, qf, qf, 0, "");

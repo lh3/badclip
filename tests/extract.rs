@@ -95,7 +95,12 @@ fn run_extract_sam(sam: &str, args: &[&str]) -> String {
         .stderr(Stdio::piped())
         .spawn()
         .expect("failed to spawn badclip");
-    child.stdin.take().unwrap().write_all(sam.as_bytes()).unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(sam.as_bytes())
+        .unwrap();
     let out = child.wait_with_output().unwrap();
     assert!(
         out.status.success(),
@@ -130,7 +135,9 @@ fn join01_matches() {
         run_extract_file("join01"),
         expected(
             "join01",
-            &["source=foo;ctype=split;idx=0;n_aln=2;aln_len=16881,2475;qlen=16848,15,2474;mapq=60,60"]
+            &[
+                "source=foo;ctype=split;idx=0;n_aln=2;aln_len=16881,2475;qlen=16848,15,2474;mapq=60,60"
+            ]
         )
     );
 }
@@ -142,7 +149,9 @@ fn join02_matches() {
         run_extract_file("join02"),
         expected(
             "join02",
-            &["source=foo;ctype=split;idx=0;n_aln=2;aln_len=16879,26284;qlen=16808,1,26163;mapq=60,60"]
+            &[
+                "source=foo;ctype=split;idx=0;n_aln=2;aln_len=16879,26284;qlen=16808,1,26163;mapq=60,60"
+            ]
         )
     );
 }
@@ -154,7 +163,9 @@ fn join03_matches() {
         run_extract_file("join03"),
         expected(
             "join03",
-            &["source=foo;ctype=split;idx=0;n_aln=2;aln_len=29505,5668;qlen=29436,1,5661;mapq=60,60"]
+            &[
+                "source=foo;ctype=split;idx=0;n_aln=2;aln_len=29505,5668;qlen=29436,1,5661;mapq=60,60"
+            ]
         )
     );
 }
@@ -183,7 +194,9 @@ fn stdin_matches_file() {
         run_extract_stdin(&paf),
         expected(
             "join02",
-            &["source=foo;ctype=split;idx=0;n_aln=2;aln_len=16879,26284;qlen=16808,1,26163;mapq=60,60"]
+            &[
+                "source=foo;ctype=split;idx=0;n_aln=2;aln_len=16879,26284;qlen=16808,1,26163;mapq=60,60"
+            ]
         )
     );
 }
@@ -223,7 +236,10 @@ fn old_names_hidden_from_help() {
         .expect("failed to run badclip");
     let help = String::from_utf8(output.stdout).unwrap();
     assert!(help.contains("getfa") && help.contains("fltbnd"), "{help}");
-    assert!(!help.contains("geteseq") && !help.contains("flteseq"), "{help}");
+    assert!(
+        !help.contains("geteseq") && !help.contains("flteseq"),
+        "{help}"
+    );
 }
 
 #[test]
@@ -238,7 +254,9 @@ fn gzip_is_detected() {
         run_extract_stdin(&gz),
         expected(
             "join01",
-            &["source=foo;ctype=split;idx=0;n_aln=2;aln_len=16881,2475;qlen=16848,15,2474;mapq=60,60"]
+            &[
+                "source=foo;ctype=split;idx=0;n_aln=2;aln_len=16881,2475;qlen=16848,15,2474;mapq=60,60"
+            ]
         )
     );
 }
@@ -341,7 +359,10 @@ fn no_qual_omits_equal() {
         "@HD\tVN:1.6\tSO:unsorted\n@SQ\tSN:chrA\tLN:400\nr1\t0\tchrA\t1\t60\t200M60S\t*\t0\t0\t{seq}\t*\n"
     );
     let stdout = run_extract_sam(&sam, &["-T"]);
-    assert!(stdout.contains(";eseq="), "eseq should be emitted:\n{stdout}");
+    assert!(
+        stdout.contains(";eseq="),
+        "eseq should be emitted:\n{stdout}"
+    );
     assert!(
         !stdout.contains("equal="),
         "equal must be omitted when QUAL is absent:\n{stdout}"
@@ -371,13 +392,20 @@ fn extract_min_mapq_is_a_col7_postfilter() {
 
     // Default -q 0: both the col7=10 clip and the col7=60 join are emitted.
     let all = run(&[]);
-    assert!(all.contains("rclip") && all.contains("rjoin"), "default:\n{all}");
+    assert!(
+        all.contains("rclip") && all.contains("rjoin"),
+        "default:\n{all}"
+    );
     // -q 20: the clip (col7=10) is dropped; the join (col7=60) survives, and its
     // mapq tag still shows the mapq-5 hit -> the alignment was NOT dropped upfront.
     let filtered = run(&["-q", "20"]);
-    assert!(!filtered.contains("rclip"), "clip col7=10 should drop:\n{filtered}");
     assert!(
-        filtered.contains("rjoin") && filtered.contains("n_aln=2;aln_len=100,100")
+        !filtered.contains("rclip"),
+        "clip col7=10 should drop:\n{filtered}"
+    );
+    assert!(
+        filtered.contains("rjoin")
+            && filtered.contains("n_aln=2;aln_len=100,100")
             && filtered.contains("mapq=60,5"),
         "join col7=60 should survive with both alignments intact:\n{filtered}"
     );
@@ -411,7 +439,10 @@ fn extract_alt_contigs() {
 
     // Without --alt: altprim clips on chrAlt, normal joins chrA<->chrAlt.
     let plain = run(&[]);
-    assert!(plain.contains("altprim") && plain.contains("chrAlt"), "plain:\n{plain}");
+    assert!(
+        plain.contains("altprim") && plain.contains("chrAlt"),
+        "plain:\n{plain}"
+    );
 
     // With --alt: altprim (primary on ALT) is gone; normal's SA-to-ALT is dropped,
     // leaving only a chrA clip -> chrAlt appears nowhere.
@@ -447,7 +478,10 @@ fn extract_min_equal_drops_low_quality() {
 
     // Default -Q 0: both breakends emitted (with their equal tags).
     let all = run(&[]);
-    assert!(all.contains("rlow") && all.contains("rhigh"), "default:\n{all}");
+    assert!(
+        all.contains("rlow") && all.contains("rhigh"),
+        "default:\n{all}"
+    );
     // -Q 20: rlow (equal 5) dropped; rhigh (equal 40) kept.
     let filtered = run(&["-Q", "20"]);
     assert!(
@@ -503,7 +537,10 @@ fn trims_off_by_default() {
         .collect();
     let got = run_extract_bam("bam01");
     assert_eq!(got, expected);
-    assert!(got.contains(";ctype=split;idx=1;"), "hidden trim keeps idx 0:\n{got}");
+    assert!(
+        got.contains(";ctype=split;idx=1;"),
+        "hidden trim keeps idx 0:\n{got}"
+    );
 }
 
 #[test]
@@ -633,7 +670,10 @@ fn getfa_infers_missing_ctype() {
 chrA\t1\t>.\t.\t.\tr1\t60\t+\tidx=0;elen=1,0,1;eseq=AC
 chrA\t1\t>>\tchrB\t2\tr2\t60\t+\tidx=0;elen=1,0,1;eseq=GT
 ";
-    assert_eq!(run_getfa_stdin(input.as_bytes()), ">r1_0_1_1_T\nAC\n>r2_0_1_1_S\nGT\n");
+    assert_eq!(
+        run_getfa_stdin(input.as_bytes()),
+        ">r1_0_1_1_T\nAC\n>r2_0_1_1_S\nGT\n"
+    );
 }
 
 #[test]
@@ -750,7 +790,10 @@ fn fltbnd_min_equal_filters() {
         "rlow (equal=5) should be dropped by default -Q 20:\n{got}"
     );
     // -Q 0 keeps rlow too.
-    assert!(run(&["-Q", "0"]).contains("rlow"), "rlow should survive -Q 0");
+    assert!(
+        run(&["-Q", "0"]).contains("rlow"),
+        "rlow should survive -Q 0"
+    );
 }
 
 #[test]
@@ -936,7 +979,10 @@ fn gap_del_ins_lines() {
     // rightmost placement), strand, qlen, idx (read-forward offset), inslen,
     // and eseq/eseq2 windows (read-forward, clamped to a hard-clipped SEQ).
     let (sam, expected) = gap_sam();
-    assert_eq!(run_extract_sam(&sam, &["-f", "10"]), pick(&expected, &[0, 1, 2, 3, 4, 5]));
+    assert_eq!(
+        run_extract_sam(&sam, &["-f", "10"]),
+        pick(&expected, &[0, 1, 2, 3, 4, 5])
+    );
 }
 
 #[test]
@@ -944,9 +990,17 @@ fn gap_min_gap() {
     // -g sets the minimum indel length (k suffix ok); -g 0 disables del/ins.
     let (sam, expected) = gap_sam();
     let run = |g: &str| run_extract_sam(&sam, &["-f", "10", "-g", g]);
-    assert_eq!(run("1.5k"), pick(&expected, &[0, 1, 4, 5]), "-g 1.5k drops the 1200I");
+    assert_eq!(
+        run("1.5k"),
+        pick(&expected, &[0, 1, 4, 5]),
+        "-g 1.5k drops the 1200I"
+    );
     assert_eq!(run("1500"), run("1.5k"));
-    assert_eq!(run("2000"), pick(&expected, &[4]), "-g 2000 drops every indel");
+    assert_eq!(
+        run("2000"),
+        pick(&expected, &[4]),
+        "-g 2000 drops every indel"
+    );
     assert_eq!(run("0"), pick(&expected, &[4]), "-g 0 disables del/ins");
 }
 
@@ -1012,8 +1066,10 @@ fn gap01_bam_paf_parity() {
                     f[1] = ".".into();
                     f[4] = ".".into();
                 } else if f[8].contains("ctype=split") {
-                    let info: Vec<&str> =
-                        f[8].split(';').filter(|kv| !kv.starts_with("aln_len=")).collect();
+                    let info: Vec<&str> = f[8]
+                        .split(';')
+                        .filter(|kv| !kv.starts_with("aln_len="))
+                        .collect();
                     f[8] = info.join(";");
                 }
                 (f.join("\t"), span)

@@ -353,7 +353,15 @@ fn parse_sa_entry(qname: &str, entry: &str) -> Option<Hit> {
     let ops = parse_cigar(f[3]);
     let mapq = f[4].parse::<i64>().ok()?;
     // The SA CIGAR is collapsed (indels merged), so its gaps are unknown.
-    Some(make_hit(qname.to_string(), ctg, pos0, strand, mapq, &ops, Vec::new()))
+    Some(make_hit(
+        qname.to_string(),
+        ctg,
+        pos0,
+        strand,
+        mapq,
+        &ops,
+        Vec::new(),
+    ))
 }
 
 /// Build a [`Hit`] from a hit's reference start, strand, mapq, CIGAR ops and

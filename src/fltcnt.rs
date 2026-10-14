@@ -71,7 +71,10 @@ fn add(acc: &mut Option<(i64, i64)>, f: i64, r: i64) {
 /// `None` if the line has no `count=` tag at all.
 fn parse_counts(info: &str, o: &FltcntOpts) -> Option<Counts> {
     let val = info.split(';').find_map(|t| t.strip_prefix("count="))?;
-    let mut c = Counts { src: None, rest: None };
+    let mut c = Counts {
+        src: None,
+        rest: None,
+    };
     for ent in val.split('|') {
         // An entry without a `src:` prefix (e.g. `merge -m` output) matches
         // neither group.
@@ -148,7 +151,11 @@ pub fn run(o: &FltcntOpts) -> io::Result<()> {
         writeln!(out, "{line}")?;
     }
     if !seen_src {
-        let src = if o.src.is_empty() { "*.flt".to_string() } else { o.src.join(",") };
+        let src = if o.src.is_empty() {
+            "*.flt".to_string()
+        } else {
+            o.src.join(",")
+        };
         eprintln!("badclip: warning: no line has a --src source ({src}); specify it with --src");
     }
     Ok(())

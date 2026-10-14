@@ -404,9 +404,18 @@ mod tests {
         // Half-open: a query ending at a start / starting at an end misses it.
         assert_eq!(t.overlap(30, 30).count(), 0);
         assert_eq!(t.overlap(5, 10).count(), 0);
-        assert_eq!(t.overlap(20, 20).map(|i| *t.data(i)).collect::<Vec<_>>(), ["b"]);
-        assert_eq!(t.overlap(19, 20).map(|i| *t.data(i)).collect::<Vec<_>>(), ["a", "b"]);
-        assert_eq!(t.overlap(20, 21).map(|i| *t.data(i)).collect::<Vec<_>>(), ["b"]);
+        assert_eq!(
+            t.overlap(20, 20).map(|i| *t.data(i)).collect::<Vec<_>>(),
+            ["b"]
+        );
+        assert_eq!(
+            t.overlap(19, 20).map(|i| *t.data(i)).collect::<Vec<_>>(),
+            ["a", "b"]
+        );
+        assert_eq!(
+            t.overlap(20, 21).map(|i| *t.data(i)).collect::<Vec<_>>(),
+            ["b"]
+        );
         assert_eq!(t.overlap(30, 40).count(), 0);
         assert_eq!(t.overlap(0, 100).count(), 3);
         // The iterator is lazy: taking one hit is fine.

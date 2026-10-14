@@ -49,10 +49,16 @@ chr3\t150\t>>\tchr3\t150\tother_ctg\t60\t+\tsrc
     // ep1_in (150 in [100,250)), ep2_in (5500 in [5000,6000)), clip_in_merged
     // (240 in the merged [100,250)), and ctg2_in (55 in [50,60)) are dropped.
     for dropped in ["ep1_in", "ep2_in", "clip_in_merged", "ctg2_in"] {
-        assert!(!got.contains(dropped), "{dropped} should be dropped:\n{got}");
+        assert!(
+            !got.contains(dropped),
+            "{dropped} should be dropped:\n{got}"
+        );
     }
     // both_out and other_ctg (contig not in BED) survive.
-    assert!(got.contains("both_out") && got.contains("other_ctg"), "survivors wrong:\n{got}");
+    assert!(
+        got.contains("both_out") && got.contains("other_ctg"),
+        "survivors wrong:\n{got}"
+    );
     assert_eq!(got.lines().count(), 2, "expected two survivors:\n{got}");
 }
 
@@ -64,8 +70,14 @@ chr1\t100\t>.\t.\t.\tat_start\t60\t+\tsrc
 chr1\t250\t>.\t.\t.\tat_end\t60\t+\tsrc
 ";
     let got = run_fltreg(input, &[]);
-    assert!(!got.contains("at_start"), "p==start should be dropped:\n{got}");
-    assert!(got.contains("at_end"), "p==end (merged) should be kept:\n{got}");
+    assert!(
+        !got.contains("at_start"),
+        "p==start should be dropped:\n{got}"
+    );
+    assert!(
+        got.contains("at_end"),
+        "p==end (merged) should be kept:\n{got}"
+    );
     assert_eq!(got.lines().count(), 1, "only at_end should survive:\n{got}");
 }
 
@@ -87,7 +99,9 @@ fn fltreg_no_input_shows_help() {
         .expect("failed to run badclip fltreg");
     assert_eq!(output.status.code(), Some(2));
     assert!(
-        String::from_utf8(output.stdout).unwrap().contains("Usage: badclip fltreg"),
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("Usage: badclip fltreg"),
         "expected usage message"
     );
 }
@@ -107,7 +121,10 @@ chr2\t0\t>.\t.\t.\tneg_start\t60\t+\tsrc
 ";
     let got = run_fltreg(input, &["-l", "100"]);
     for dropped in ["pad_in", "pad_start", "ep2_pad_in", "neg_start"] {
-        assert!(!got.contains(dropped), "{dropped} should be dropped:\n{got}");
+        assert!(
+            !got.contains(dropped),
+            "{dropped} should be dropped:\n{got}"
+        );
     }
     for kept in ["pad_end", "before_pad", "ep2_pad_end"] {
         assert!(got.contains(kept), "{kept} should be kept:\n{got}");
@@ -116,5 +133,9 @@ chr2\t0\t>.\t.\t.\tneg_start\t60\t+\tsrc
 
     // Default -l 0: none of the padded-only positions are filtered.
     let got = run_fltreg(input, &[]);
-    assert_eq!(got.lines().count(), 7, "default margin must not filter:\n{got}");
+    assert_eq!(
+        got.lines().count(),
+        7,
+        "default margin must not filter:\n{got}"
+    );
 }
