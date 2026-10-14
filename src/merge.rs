@@ -15,10 +15,18 @@
 //! clusters. Each incoming record joins the active cluster whose members it most
 //! often matches (`same_sv`), else starts a new cluster. When a cluster falls
 //! out of the window it is emitted if it passes the read-count filters.
+//!
+//! Clustering ignores the breakend type (`ctype`), so e.g. a deletion seen as
+//! both `split` and CIGAR `del` reads forms one call; the call reports its
+//! per-ctype read counts, the insertion lengths of its `ins` reads, and — for
+//! calls with `split`/`trim` reads, which a long germline insertion can fake as
+//! a translocation — the number of `ins` reads anywhere in the input near its
+//! ends.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{self, BufRead, Write};
 
+use crate::iitree::IITree;
 use crate::io::open_reader;
 
 /// Options for `merge`, mirroring minisv's `-c -s -w -A` (plus `-M` for the
@@ -53,9 +61,43 @@ pub struct MergeOpts {
     pub min_cnt_strand_in: i64,
 }
 
-/// One parsed `extract` breakend record. Every extract record is a breakend, so
-/// there is no indel variant. Only fields needed for clustering/emission are
-/// kept (the col-8 INFO is not — merge INFO is derived from scratch).
+/// The breakend type of an `extract` record (its `ctype=` tag).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Ctype {
+    Trim,
+    Split,
+    Del,
+    Ins,
+}
+
+impl Ctype {
+    /// Parse a `ctype=` value. A missing (pre-0.2 output) or unknown value is
+    /// inferred as `getfa` does: a trim if the record has no mate (`ctg2` is
+    /// `.`), else a split.
+    fn parse(v: Option<&str>, ctg2: &str) -> Ctype {
+        match v {
+            Some("trim") => Ctype::Trim,
+            Some("split") => Ctype::Split,
+            Some("del") => Ctype::Del,
+            Some("ins") => Ctype::Ins,
+            _ if ctg2 == "." => Ctype::Trim,
+            _ => Ctype::Split,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Ctype::Trim => "trim",
+            Ctype::Split => "split",
+            Ctype::Del => "del",
+            Ctype::Ins => "ins",
+        }
+    }
+}
+
+/// One parsed `extract` breakend record. Only fields needed for
+/// clustering/emission are kept (the col-8 INFO is not — merge INFO is derived
+/// from scratch).
 struct Rec {
     ctg: String,       // col 0
     pos: i64,          // col 1 (0-based)
@@ -71,6 +113,8 @@ struct Rec {
     strand: u8, // col 7, b'+' or b'-'
     name: String,      // col 5, qname
     source: String,    // `source=` INFO tag (col 8); "." if absent
+    ctype: Ctype,      // `ctype=` INFO tag (inferred if absent)
+    inslen: i64,       // `inslen=` INFO tag of an `ins` record; 0 otherwise
     // Read counts carried by a `-m` (sample-merge) input line: `fwd`/`rev` summed
     // over the `count=` tag's sources, `fr`/`rf` from `count_fr=`/`count_rf=`. All
     // 0 in extract mode, where write_sv counts members by strand/ori instead.
@@ -142,6 +186,7 @@ fn parse_rec(line: &str, min_equal: i64, min_mapq: i64, min_mapq_min: i64) -> Op
     {
         return None;
     }
+    let ctype = Ctype::parse(f[8].split(';').find_map(|kv| kv.strip_prefix("ctype=")), f[3]);
     Some(Rec {
         ctg: f[0].to_string(),
         pos: f[1].parse().ok()?,
@@ -159,6 +204,8 @@ fn parse_rec(line: &str, min_equal: i64, min_mapq: i64, min_mapq_min: i64) -> Op
             .find_map(|kv| kv.strip_prefix("source="))
             .unwrap_or(".")
             .to_string(),
+        ctype,
+        inslen: if ctype == Ctype::Ins { info_int(f[8], "inslen=") } else { 0 },
         // Not used in extract mode (write_sv counts members by strand/ori).
         fwd: 0,
         rev: 0,
@@ -259,6 +306,9 @@ fn parse_rec_merge(line: &str, opts: &MergeOpts) -> Option<Rec> {
         mapq2,
         strand: f[7].bytes().next()?,
         source: ".".to_string(),
+        // Not used in -m mode (write_sv_merge emits no per-ctype tags).
+        ctype: Ctype::parse(None, f[3]),
+        inslen: 0,
         fwd,
         rev,
         fr: info_int(f[8], "count_fr="),
@@ -297,8 +347,69 @@ fn same_sv(v: &Rec, w: &Rec, win: i64) -> bool {
     true
 }
 
+/// The `ins` records of the whole input, for the `ins_nearby` tag: per contig,
+/// an interval tree over each record's `[L-w, R+w]` (`L`/`R` = its pos1/pos2,
+/// the insertion's leftmost/rightmost placement), so an end `(ctg, p)` finds
+/// the records whose `[L, R]` is within `w` of `p`.
+struct InsIndex {
+    /// `(source, qname)` of each `ins` record (the tree payload indexes this).
+    reads: Vec<(String, String)>,
+    trees: HashMap<String, IITree<i64, usize>>,
+}
+
+impl InsIndex {
+    fn new(recs: &[Rec], win: i64) -> InsIndex {
+        let mut reads = Vec::new();
+        let mut trees: HashMap<String, IITree<i64, usize>> = HashMap::new();
+        for r in recs.iter().filter(|r| r.ctype == Ctype::Ins) {
+            let (l, rr) = (r.pos, r.pos2.unwrap_or(r.pos));
+            trees
+                .entry(r.ctg.clone())
+                .or_default()
+                .add(l - win, rr + win + 1, reads.len());
+            reads.push((r.source.clone(), r.name.clone()));
+        }
+        for t in trees.values_mut() {
+            t.index();
+        }
+        InsIndex { reads, trees }
+    }
+
+    /// Per-source counts of the distinct `ins` reads (by source and name) near
+    /// any of `ends`.
+    fn nearby<'a>(&'a self, ends: &[(&str, i64)]) -> BTreeMap<&'a str, i64> {
+        let mut seen: HashSet<&(String, String)> = HashSet::new();
+        for &(ctg, p) in ends {
+            if let Some(t) = self.trees.get(ctg) {
+                for i in t.overlap(p, p + 1) {
+                    seen.insert(&self.reads[*t.data(i)]);
+                }
+            }
+        }
+        let mut cnt: BTreeMap<&str, i64> = BTreeMap::new();
+        for (src, _) in seen {
+            *cnt.entry(src.as_str()).or_default() += 1;
+        }
+        cnt
+    }
+}
+
+/// Format a per-key count map as `key:n|key:n` (keys in map order).
+fn join_counts(m: &BTreeMap<&str, i64>) -> String {
+    m.iter()
+        .map(|(k, n)| format!("{k}:{n}"))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
 /// Apply the read-count filters and, if the cluster passes, emit one merged line.
-fn write_sv(out: &mut impl Write, cl: &Cluster, opts: &MergeOpts) -> io::Result<()> {
+/// `ins` (absent in `-m` mode) supplies the `ins_nearby` counts.
+fn write_sv(
+    out: &mut impl Write,
+    cl: &Cluster,
+    opts: &MergeOpts,
+    ins: Option<&InsIndex>,
+) -> io::Result<()> {
     let s = &cl.members;
     if s.is_empty() {
         return Ok(());
@@ -321,6 +432,10 @@ fn write_sv(out: &mut impl Write, cl: &Cluster, opts: &MergeOpts) -> io::Result<
     // alphabetical in output. Read names stay in cluster-member order per source.
     let mut per_source: BTreeMap<&str, [i64; 2]> = BTreeMap::new();
     let mut reads_by_source: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    // Per-ctype member counts (alphabetical), and the ins members' inslen
+    // count/sum/min/max.
+    let mut per_ctype: BTreeMap<&str, i64> = BTreeMap::new();
+    let (mut n_ins, mut ins_sum, mut ins_min, mut ins_max) = (0i64, 0i64, i64::MAX, i64::MIN);
     for m in s {
         mapq1_sum += m.mapq1;
         mapq2_sum += m.mapq2;
@@ -328,6 +443,13 @@ fn write_sv(out: &mut impl Write, cl: &Cluster, opts: &MergeOpts) -> io::Result<
         cnt[strand_ix] += 1;
         per_source.entry(&m.source).or_default()[strand_ix] += 1;
         reads_by_source.entry(&m.source).or_default().push(&m.name);
+        *per_ctype.entry(m.ctype.as_str()).or_default() += 1;
+        if m.ctype == Ctype::Ins {
+            n_ins += 1;
+            ins_sum += m.inslen;
+            ins_min = ins_min.min(m.inslen);
+            ins_max = ins_max.max(m.inslen);
+        }
         if m.ori == *b"><" {
             fr += 1;
         } else if m.ori == *b"<>" {
@@ -355,11 +477,30 @@ fn write_sv(out: &mut impl Write, cl: &Cluster, opts: &MergeOpts) -> io::Result<
         .map(|(src, [f, r])| format!("{src}:{f},{r}"))
         .collect::<Vec<_>>()
         .join("|");
-    let mut info = format!("avg_mapq={q1},{q2};count={count}");
+    let mut info = format!("avg_mapq={q1},{q2};count={count};ctype_count={}", join_counts(&per_ctype));
+    if n_ins > 0 {
+        let avg = (ins_sum as f64 / n_ins as f64).round() as i64;
+        info.push_str(&format!(";avg_inslen={avg};diff_inslen={}", ins_max - ins_min));
+    }
     if fr + rf > 0 {
         info.push_str(&format!(";count_fr={fr};count_rf={rf}"));
         if fr * rf == 0 && v.ctg == v.ctg2 {
             info.push_str(";foldback");
+        }
+    }
+    // ins_nearby: for a call with split/trim reads (which a long germline
+    // insertion can turn into a spurious translocation), the distinct `ins`
+    // reads of the whole input within -w of either printed end, per source.
+    if let Some(ins) = ins
+        && s.iter().any(|m| matches!(m.ctype, Ctype::Split | Ctype::Trim))
+    {
+        let mut ends = vec![(v.ctg.as_str(), v.pos)];
+        if let Some(p2) = v.pos2 {
+            ends.push((v.ctg2.as_str(), p2));
+        }
+        let near = ins.nearby(&ends);
+        if !near.is_empty() {
+            info.push_str(&format!(";ins_nearby={}", join_counts(&near)));
         }
     }
     // reads=src:name,...|... — same sources/order as count=, names per source.
@@ -479,6 +620,8 @@ pub fn run(opts: &MergeOpts) -> io::Result<()> {
         }
     }
     recs.sort_by(|a, b| a.ctg.cmp(&b.ctg).then(a.pos.cmp(&b.pos)));
+    // Index every (filtered) `ins` record before the sweep moves them away.
+    let ins = (!opts.merge_input).then(|| InsIndex::new(&recs, opts.win_size));
 
     let stdout = io::stdout();
     let mut out = io::BufWriter::new(stdout.lock());
@@ -493,7 +636,7 @@ pub fn run(opts: &MergeOpts) -> io::Result<()> {
                 || v.pos - front.pos_max > opts.win_size
                 || active.len() as i64 > opts.max_allele
             {
-                write_sv(&mut out, &active.pop_front().unwrap(), opts)?;
+                write_sv(&mut out, &active.pop_front().unwrap(), opts, ins.as_ref())?;
             } else {
                 break;
             }
@@ -532,7 +675,7 @@ pub fn run(opts: &MergeOpts) -> io::Result<()> {
         }
     }
     while let Some(cl) = active.pop_front() {
-        write_sv(&mut out, &cl, opts)?;
+        write_sv(&mut out, &cl, opts, ins.as_ref())?;
     }
     Ok(())
 }

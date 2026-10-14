@@ -168,6 +168,110 @@ chr1\t1000\t>>\tchr1\t1004\tilow\t60\t+\tsource=foo;ctype=ins;mapq=60,60;equal=3
     assert!(all.contains("ilow"), "ilow should survive -Q 0:\n{all}");
 }
 
+/// One extract-style line: `ctg1 pos1 ori ctg2 pos2 name 60 strand INFO`, with
+/// INFO `source=SRC;ctype=CT;mapq=60,60` (`mapq=60,0` for a trim) plus `extra`.
+fn rec(loc: &str, name: &str, strand: char, src: &str, ct: &str, extra: &str) -> String {
+    let mapq = if ct == "trim" { "60,0" } else { "60,60" };
+    format!("{loc}\t{name}\t60\t{strand}\tsource={src};ctype={ct};mapq={mapq}{extra}\n")
+}
+
+/// The INFO tag `key=` of the merged line whose first five columns are `loc`.
+fn tag_of(out: &str, loc: &str, key: &str) -> Option<String> {
+    let line = out.lines().find(|l| l.starts_with(loc))?;
+    line.split('\t')
+        .nth(8)?
+        .split(';')
+        .find_map(|kv| kv.strip_prefix(key))
+        .map(|v| v.trim_start_matches('=').to_string())
+}
+
+#[test]
+fn merge_ctype_count() {
+    // A deletion seen both as CIGAR `del` and as `split` reads forms one call,
+    // whose ctype_count lists each type (alphabetical) and sums to col 7.
+    let input = [
+        rec("chr1\t1000\t>>\tchr1\t11000", "d1", '+', "foo", "del", ""),
+        rec("chr1\t1010\t>>\tchr1\t11005", "d2", '-', "foo", "del", ""),
+        rec("chr1\t1020\t>>\tchr1\t10990", "s1", '+', "foo", "split", ""),
+    ]
+    .concat();
+    let got = run_merge_stdin(&input, &[]);
+    assert_eq!(got.lines().count(), 1, "{got}");
+    assert!(got.contains("\t3\t") && got.contains(";ctype_count=del:2|split:1;"), "{got}");
+    assert!(!got.contains("avg_inslen") && !got.contains("ins_nearby"), "{got}");
+}
+
+#[test]
+fn merge_ctype_inferred() {
+    // Input without ctype (pre-0.2): a mate-less line is a trim, else a split.
+    let input = "\
+chr1\t100\t>.\t.\t.\tc1\t60\t+\tsource=foo;mapq=60,0
+chr1\t105\t>.\t.\t.\tc2\t60\t-\tsource=foo;mapq=60,0
+chr1\t500\t>>\tchr2\t50\tj1\t60\t+\tsource=foo;mapq=60,60
+chr1\t505\t>>\tchr2\t55\tj2\t60\t-\tsource=foo;mapq=60,60
+";
+    let got = run_merge_stdin(input, &[]);
+    assert_eq!(tag_of(&got, "chr1\t10", "ctype_count").as_deref(), Some("trim:2"), "{got}");
+    assert_eq!(tag_of(&got, "chr1\t50", "ctype_count").as_deref(), Some("split:2"), "{got}");
+}
+
+#[test]
+fn merge_inslen_stats() {
+    // avg_inslen (rounded mean) and diff_inslen (max - min) over the ins reads.
+    let input = [
+        rec("chr1\t5000\t>>\tchr1\t5004", "i1", '+', "foo", "ins", ";inslen=1000"),
+        rec("chr1\t5002\t>>\tchr1\t5004", "i2", '-', "foo", "ins", ";inslen=1200"),
+        rec("chr1\t5000\t>>\tchr1\t5006", "i3", '+', "foo", "ins", ";inslen=1101"),
+    ]
+    .concat();
+    let got = run_merge_stdin(&input, &[]);
+    assert_eq!(got.lines().count(), 1, "{got}");
+    assert!(
+        got.contains(";ctype_count=ins:3;avg_inslen=1100;diff_inslen=200;"),
+        "{got}"
+    );
+}
+
+#[test]
+fn merge_ins_nearby() {
+    // N carries a germline insertion at chr1:[4990,5010] (i1, i2). T has a lone
+    // ins read i3 at [5060,5120] (pos2 >100 bp from i1/i2's, so its own cluster
+    // fails -c, but it still counts) and four 2-read clusters: splits near the
+    // insertion (a spurious translocation), splits 1 kb away, a same-contig
+    // split whose two ends are both near i3, and a pure del near the insertion.
+    // A call prints its upper-middle member's coordinates, which are the ends
+    // tested.
+    let input = [
+        rec("chr1\t4990\t>>\tchr1\t5010", "i1", '+', "N", "ins", ";inslen=3000"),
+        rec("chr1\t4995\t>>\tchr1\t5010", "i2", '-', "N", "ins", ";inslen=3005"),
+        rec("chr1\t5060\t>>\tchr1\t5120", "i3", '+', "T", "ins", ";inslen=3001"),
+        rec("chr1\t5100\t>>\tchr2\t300", "t1", '+', "T", "split", ""),
+        rec("chr1\t5105\t>>\tchr2\t305", "t2", '-', "T", "split", ""),
+        rec("chr1\t6200\t>>\tchr3\t300", "f1", '+', "T", "split", ""),
+        rec("chr1\t6205\t>>\tchr3\t305", "f2", '-', "T", "split", ""),
+        rec("chr1\t4995\t<<\tchr1\t5195", "b1", '+', "T", "split", ""),
+        rec("chr1\t5000\t<<\tchr1\t5200", "b2", '-', "T", "split", ""),
+        rec("chr1\t5000\t>>\tchr1\t20000", "d1", '+', "T", "del", ""),
+        rec("chr1\t5003\t>>\tchr1\t20002", "d2", '-', "T", "del", ""),
+    ]
+    .concat();
+    let got = run_merge_stdin(&input, &[]);
+    assert!(!got.contains("i3"), "i3's own cluster fails -c 2:\n{got}");
+    // 5105 is within 100 of i1/i2 ([4990,5010], [4995,5010]) and of i3.
+    assert_eq!(tag_of(&got, "chr1\t5105\t>>", "ins_nearby").as_deref(), Some("N:2|T:1"), "{got}");
+    // 1 kb away: nothing nearby, no tag.
+    assert!(got.contains("chr1\t6205\t>>"), "{got}");
+    assert_eq!(tag_of(&got, "chr1\t6205\t>>", "ins_nearby"), None, "{got}");
+    // End 5000 is near i1, i2 and i3; end 5200 near i3 again, which counts once.
+    assert_eq!(tag_of(&got, "chr1\t5000\t<<", "ins_nearby").as_deref(), Some("N:2|T:1"), "{got}");
+    // A pure del call gets no ins_nearby.
+    assert!(got.contains("chr1\t5003\t>>\tchr1\t20002"), "{got}");
+    assert_eq!(tag_of(&got, "chr1\t5003\t>>", "ins_nearby"), None, "{got}");
+    // -w 50: 5105 is now within 50 of i3 only.
+    let got = run_merge_stdin(&input, &["-w", "50"]);
+    assert_eq!(tag_of(&got, "chr1\t5105\t>>", "ins_nearby").as_deref(), Some("T:1"), "{got}");
+}
+
 #[test]
 fn merge_min_mapq_filters() {
     // Three clips clustering at chr1:1000; qlo has col-7 mapq 5. -q drops input

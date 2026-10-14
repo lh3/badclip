@@ -101,9 +101,10 @@ and `|pos2−pos2| ≤ -w` **skipped when either `pos2` is absent** (a clip's `.
 mate — reproduces minisv's `NaN` comparison, so clips cluster on `ctg2`/`pos`
 alone). Per-cluster comparisons are capped at `-C` members (a deterministic cap
 replacing minisv's reservoir sampling — deep-cluster counts are capped, not
-scaled), and the active-cluster list is bounded by `-A`. `ctype` is ignored: a
-CIGAR `del` clusters with split-read deletions at the same coordinates, and an
-insertion's `inslen` is not carried into the merged call.
+scaled), and the active-cluster list is bounded by `-A`. Clustering ignores
+`ctype` (`Rec::ctype`, a `Ctype` enum; missing/unknown → trim if `ctg2` is `.`,
+else split, as in `getfa`): a CIGAR `del` clusters with split-read deletions at
+the same coordinates, and the call reports the mix (`ctype_count`).
 
 Flags mirror minisv's kept subset: `-c` min read count (2), `-s` min count on
 each strand (0), `-w` window bp (100), `-A` max active clusters (100), `-M` max
@@ -130,9 +131,13 @@ ctg1  pos1  ori  ctg2  pos2  .  count  strand  INFO
 `elen`/`eseq` are **not** carried through): `avg_mapq=q1,q2;count=<src:f,r|...>`
 (`q1` = mean per-hit mapq on the `ctg1:pos1` side, `q2` on the `ctg2:pos2` side
 from each member's `mapq=` INFO pair — already output-endpoint-aligned, so
-inversion `><`/`<>` members average correctly; `q2=0` for a clip cluster) then,
-when any member is `><`/`<>`, `;count_fr=A;count_rf=B` and `;foldback` if `A*B==0
-&& ctg1==ctg2`, and finally `;reads=<src:name,...|...>`. `count=` lists each
+inversion `><`/`<>` members average correctly; `q2=0` for a clip cluster), then
+`;ctype_count=<type:n|...>` (members per ctype, alphabetical, present types
+only; sums to col 7), then — when the cluster has `ins` members —
+`;avg_inslen=N;diff_inslen=M` (rounded mean and `max-min` of their `inslen`),
+then, when any member is `><`/`<>`, `;count_fr=A;count_rf=B` and `;foldback` if
+`A*B==0 && ctg1==ctg2`, then `;ins_nearby=<src:n|...>`, and finally
+`;reads=<src:name,...|...>`. `count=` lists each
 `source=` observed in the cluster (from the reads' `source=` tag) with its
 forward,reverse counts, `|`-joined and **alphabetical** by source; a source is
 included only if present (never `x:0,0`), e.g. `count=foo:2,3|retain:4,5` or
@@ -146,6 +151,17 @@ cluster-wide strand totals.
 read strand, so `-s` is an approximate two-sided-support heuristic. Fixtures:
 `test/merge01.clip` (unsorted input), `test/merge01.expected` (`-c 3 -s 1`
 golden).
+
+`ins_nearby` (only for a cluster with a `split`/`trim` member; omitted when 0)
+flags spurious translocations from long germline insertions whose sequence maps
+elsewhere: the distinct `ins` reads — deduplicated by `(source, qname)` across
+both ends, counted per source, alphabetical — of the **whole input** (any
+source, after the per-record `-Q`/`-q`/`-p` filters, incl. those whose own
+cluster fails `-c`) near either printed end `(ctg1,pos1)`/`(ctg2,pos2)`. An `ins`
+record `ctg L >> ctg R` is near `(ctg,p)` iff `L-w <= p <= R+w` (`-w`).
+`InsIndex` (built in `run` after parsing, before the sweep moves records into
+clusters) holds a per-contig `IITree` of `[L-w, R+w+1)` per `ins` record; an end
+is a point query `overlap(p, p+1)`.
 
 ### `-m` sample-merge
 
@@ -176,7 +192,9 @@ swaps only the input parser (`parse_rec_merge`) and output emitter
   of members' per-end avg mapq.
 - **Output INFO** (`-m`): `avg_mapq=q1,q2;count=F,R` (aggregate read `F,R`, **no**
   per-source breakdown) then, for inversions, `;count_fr=A;count_rf=B[;foldback]`.
-  **No `reads=` tag** (too many at 3202-sample scale). The output is itself
+  **No `reads=` tag** (too many at 3202-sample scale), and no
+  `ctype_count`/`avg_inslen`/`diff_inslen`/`ins_nearby` (ignored on input; no
+  `InsIndex` is built). The output is itself
   `-m`-parseable, so merges chain (col-7 then falls back to member count, since
   `count=F,R` drops the source labels).
 

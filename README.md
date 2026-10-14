@@ -322,13 +322,14 @@ Options:
 
 Breakends within `-w` bp on both endpoints (with `><`/`<>` treated as the same
 inversion) are grouped, whatever their `ctype` — a CIGAR deletion clusters with
-the split-read deletions at the same coordinates; a group is reported only if it has at least `-c` reads
+the split-read deletions at the same coordinates, and the call reports the mix in
+`ctype_count`; a group is reported only if it has at least `-c` reads
 with at least `-s` on each strand. Output keeps the 9-column, TAB-delimited
 `extract` shape, with the supporting-read count in the `mapq` slot and a
 merge-derived INFO column:
 
 ```
-ctg1   pos1   ori   ctg2   pos2   .   count   strand   avg_mapq=q1,q2;count=..[;count_fr=..;count_rf=..[;foldback]];reads=..
+ctg1   pos1   ori   ctg2   pos2   .   count   strand   avg_mapq=q1,q2;count=..;ctype_count=..[;avg_inslen=..;diff_inslen=..][;count_fr=..;count_rf=..[;foldback]][;ins_nearby=..];reads=..
 ```
 
 - `avg_mapq=q1,q2` — mean per-hit mapq of the cluster's reads, split by output
@@ -340,10 +341,24 @@ ctg1   pos1   ori   ctg2   pos2   .   count   strand   avg_mapq=q1,q2;count=..[;
   (never `x:0,0`), e.g. `count=foo:2,3|retain:4,5`, or `count=foo:2,2` for a
   single source. The column-7 `count` is the grand total across all sources and
   strands.
+- `ctype_count=type:n|…` — the reads per breakend type (`del`, `ins`, `split`,
+  `trim`), alphabetical, listing only types present, e.g. `del:10|split:5` for a
+  deletion seen both in CIGARs and as split reads. Sums to column 7. Input
+  without a `ctype` tag (pre-0.2) counts as `trim` when it has no mate, else
+  `split`.
+- `avg_inslen`, `diff_inslen` — for a call with `ins` reads: their mean
+  `inslen` (rounded) and `max - min`.
 - `count_fr`, `count_rf` — reads oriented `><` and `<>`; present only when the
   cluster has at least one such read. `foldback` is added when only one of the
   two orientations is present (`count_fr` or `count_rf` is `0`) and both
   endpoints are on the same contig.
+- `ins_nearby=src:n|…` — for a call with `split`/`trim` reads: the number of
+  distinct `ins` reads in the whole input (any source, after `-Q`/`-q`/`-p`,
+  whether or not their own call is reported) within `-w` bp of either printed
+  end — an `ins` line `ctg L >> ctg R` is near `(ctg, p)` when
+  `L - w <= p <= R + w` — per source, alphabetical; omitted when none. A long
+  germline insertion whose sequence maps elsewhere can masquerade as a
+  translocation; `ins` reads nearby (e.g. from the matched normal) flag it.
 - `reads=src:name,…|…` — the supporting read names, stratified by `source=` the
   same way as `count=`: `|`-joined and alphabetical by source (names in
   member order within each source), e.g. `reads=foo:r1,r2|retain:r3,r4`. Lists the
@@ -367,7 +382,8 @@ Output stays in the 9-column shape but with **column 7 = the number of distinct
 sources** (samples) in the cluster and a compact INFO:
 `avg_mapq=q1,q2;count=F,R` (aggregate forward,reverse reads, no per-source
 breakdown) plus `count_fr`/`count_rf`/`foldback` for inversions — **no `reads=`
-tag**. The output is itself `-m`-parseable, so merges chain.
+tag**, and none of `ctype_count`/`avg_inslen`/`diff_inslen`/`ins_nearby`
+(ignored on input). The output is itself `-m`-parseable, so merges chain.
 
 ```sh
 # combine per-sample merge outputs, then re-merge across samples
