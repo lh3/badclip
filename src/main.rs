@@ -217,6 +217,15 @@ enum Command {
         #[arg(short = 'I', long = "inv-dist")]
         inv_dist: bool,
 
+        /// Maximum ins_nearby reads, summed over sources (-1 = no limit).
+        #[arg(
+            short = 'i',
+            long = "max-ins-nearby",
+            default_value_t = 0,
+            allow_negative_numbers = true
+        )]
+        max_ins: i64,
+
         /// Comma-separated sources tested by -c/-s [default: sources ending
         /// with ".flt"].
         #[arg(long = "src", value_delimiter = ',')]
@@ -372,6 +381,7 @@ fn main() -> ExitCode {
             max_rest,
             min_dist,
             inv_dist,
+            max_ins,
             src,
             rest,
         } => {
@@ -385,6 +395,7 @@ fn main() -> ExitCode {
                 max_rest,
                 min_dist,
                 inv_dist,
+                max_ins,
                 src,
                 rest,
             })

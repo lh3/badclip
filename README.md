@@ -440,6 +440,11 @@ badclip fltcnt [OPTIONS] [INPUT]
   the filter. Inter-contig splits have no distance and pass. Note an insertion
   spans only its `L..R` shift range, so any positive `-l` drops insertions.
   Accepts a `k`/`m`/`g` suffix, e.g. `-l 100k`, `-l 1m`.
+- `-I` — apply `-l` to inversions (`ori` `><`/`<>`) too; by default they pass
+  regardless of distance.
+- `-i INT` — maximum `ins_nearby` reads, summed over its sources (default 0,
+  i.e. drop any call with an insertion nearby; a call without the tag has 0;
+  `-1` = no limit).
 - `--src LIST` — comma-separated sources tested by `-c`/`-s` (default: every
   source ending with `.flt`).
 - `--rest LIST` — comma-separated sources tested by `-r` (default: every source

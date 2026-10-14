@@ -150,3 +150,19 @@ fn fltcnt_no_source_aborts() {
             .success()
     );
 }
+
+#[test]
+fn fltcnt_ins_nearby() {
+    let input = "\
+chr1\t100\t>>\tchr2\t50\tnone\t6\t+\tavg_mapq=60,60;count=s.flt:3,3;reads=s.flt:a
+chr1\t100\t>>\tchr2\t50\tone\t6\t+\tavg_mapq=60,60;count=s.flt:3,3;ins_nearby=N.raw:2;reads=s.flt:a
+chr1\t100\t>>\tchr2\t50\ttwo\t6\t+\tavg_mapq=60,60;count=s.flt:3,3;ins_nearby=N.raw:2|T.raw:3;reads=s.flt:a
+";
+    // Default -i 0 drops any call with ins_nearby; -1 lifts the cap.
+    assert_eq!(kept(input, &[]), ["none"]);
+    assert_eq!(kept(input, &["-i", "-1"]), ["none", "one", "two"]);
+    // Counts are summed over sources: two has 2+3.
+    assert_eq!(kept(input, &["-i", "2"]), ["none", "one"]);
+    assert_eq!(kept(input, &["-i", "4"]), ["none", "one"]);
+    assert_eq!(kept(input, &["-i", "5"]), ["none", "one", "two"]);
+}

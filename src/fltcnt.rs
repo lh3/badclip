@@ -16,7 +16,10 @@
 //! `-l` is negative, clips (`ctg2 = "."`) and same-contig calls with
 //! `pos2 - pos1 < -l` are also dropped (so the default `-l 0` drops clips only);
 //! inter-contig joins have no distance and pass. Inversions (`ori` `><`/`<>`)
-//! are exempt from the distance test unless `-I` is given.
+//! are exempt from the distance test unless `-I` is given. Calls whose
+//! `ins_nearby=` counts (summed over sources; absent = 0) exceed `-i` are dropped
+//! (a negative `-i` lifts that cap), so by default (`-i 0`) any call with an
+//! insertion nearby is dropped.
 
 use std::io::{self, BufRead, Write};
 
@@ -30,6 +33,8 @@ pub struct FltcntOpts {
     pub min_dist: i64,
     /// Apply `-l` to inversions too.
     pub inv_dist: bool,
+    /// Maximum `ins_nearby=` reads, summed over sources; negative = no cap.
+    pub max_ins: i64,
     /// `--src` names; empty = sources ending with `.flt`.
     pub src: Vec<String>,
     /// `--rest` names; empty = sources not in `--src`.
@@ -97,6 +102,17 @@ fn parse_counts(info: &str, o: &FltcntOpts) -> Option<Counts> {
     Some(c)
 }
 
+/// Total `ins_nearby=src:n|...` reads over all sources; 0 without the tag.
+fn ins_nearby(info: &str) -> i64 {
+    info.split(';')
+        .find_map(|t| t.strip_prefix("ins_nearby="))
+        .map_or(0, |val| {
+            val.split('|')
+                .filter_map(|ent| ent.rsplit_once(':')?.1.parse::<i64>().ok())
+                .sum()
+        })
+}
+
 pub fn run(o: &FltcntOpts) -> io::Result<()> {
     let reader = open_reader(&o.input)?;
     let stdout = io::stdout();
@@ -129,6 +145,7 @@ pub fn run(o: &FltcntOpts) -> io::Result<()> {
         if sf + sr < o.min_src
             || sf.min(sr) < o.min_src_strand
             || (o.max_rest >= 0 && rf + rr > o.max_rest)
+            || (o.max_ins >= 0 && f.get(8).map_or(0, |info| ins_nearby(info)) > o.max_ins)
         {
             continue;
         }

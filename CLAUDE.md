@@ -239,7 +239,10 @@ clips (`ctg2 = "."`), and when positive also same-contig lines with
 only its normalization range `R - L`, so any positive `-l` drops insertions.) Inversions (`ori` `><`/`<>`) are
 exempt from the distance test (always kept, regardless of `pos2 - pos1`) unless
 `-I` is given, which applies `-l` to them too; clips are still dropped either
-way. `-l -1` (any negative) disables it. Tests: `tests/fltcnt.rs`.
+way. `-l -1` (any negative) disables it. `-i` (default 0) also requires the
+`ins_nearby=src:n|...` counts, summed over all sources (absent tag = 0), to be
+`<= -i` — a **maximum** like `-r` (negative = no cap), so by default any call
+with an insertion nearby is dropped (`fltcnt.rs::ins_nearby`). Tests: `tests/fltcnt.rs`.
 
 ## Interval / offset notation
 
