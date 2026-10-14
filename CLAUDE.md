@@ -157,7 +157,10 @@ flags spurious translocations from long germline insertions whose sequence maps
 elsewhere: the distinct `ins` reads — deduplicated by `(source, qname)` across
 both ends, counted per source, alphabetical — of the **whole input** (any
 source, after the per-record `-Q`/`-q`/`-p` filters, incl. those whose own
-cluster fails `-c`) near either printed end `(ctg1,pos1)`/`(ctg2,pos2)`. An `ins`
+cluster fails `-c`) near either printed end `(ctg1,pos1)`/`(ctg2,pos2)`, **minus
+the call's own reads** (any member's `(source, qname)`, whatever its ctype — so a
+split+`ins` insertion call doesn't flag itself, and a split read that also
+carries a CIGAR `ins` nearby isn't counted). An `ins`
 record `ctg L >> ctg R` is near `(ctg,p)` iff `L-w <= p <= R+w` (`-w`).
 `InsIndex` (built in `run` after parsing, before the sweep moves records into
 clusters) holds a per-contig `IITree` of `[L-w, R+w+1)` per `ins` record; an end
@@ -242,7 +245,9 @@ exempt from the distance test (always kept, regardless of `pos2 - pos1`) unless
 way. `-l -1` (any negative) disables it. `-i` (default 0) also requires the
 `ins_nearby=src:n|...` counts, summed over all sources (absent tag = 0), to be
 `<= -i` — a **maximum** like `-r` (negative = no cap), so by default any call
-with an insertion nearby is dropped (`fltcnt.rs::ins_nearby`). Tests: `tests/fltcnt.rs`.
+carrying `ins_nearby` is dropped (`fltcnt.rs::ins_nearby`). `merge` writes the
+tag only on calls with a `split`/`trim` member (and not counting the call's own
+reads), so pure `del`/`ins` calls always pass `-i`. Tests: `tests/fltcnt.rs`.
 
 ## Interval / offset notation
 

@@ -386,13 +386,20 @@ impl InsIndex {
     }
 
     /// Per-source counts of the distinct `ins` reads (by source and name) near
-    /// any of `ends`.
-    fn nearby<'a>(&'a self, ends: &[(&str, i64)]) -> BTreeMap<&'a str, i64> {
+    /// any of `ends`, leaving out the reads in `own` (the call's own reads).
+    fn nearby<'a>(
+        &'a self,
+        ends: &[(&str, i64)],
+        own: &HashSet<(&str, &str)>,
+    ) -> BTreeMap<&'a str, i64> {
         let mut seen: HashSet<&(String, String)> = HashSet::new();
         for &(ctg, p) in ends {
             if let Some(t) = self.trees.get(ctg) {
                 for i in t.overlap(p, p + 1) {
-                    seen.insert(&self.reads[*t.data(i)]);
+                    let r = &self.reads[*t.data(i)];
+                    if !own.contains(&(r.0.as_str(), r.1.as_str())) {
+                        seen.insert(r);
+                    }
                 }
             }
         }
@@ -507,6 +514,8 @@ fn write_sv(
     // ins_nearby: for a call with split/trim reads (which a long germline
     // insertion can turn into a spurious translocation), the distinct `ins`
     // reads of the whole input within -w of either printed end, per source.
+    // The call's own reads are left out, so an insertion call holding both
+    // split and `ins` reads does not flag itself.
     if let Some(ins) = ins
         && s.iter()
             .any(|m| matches!(m.ctype, Ctype::Split | Ctype::Trim))
@@ -515,7 +524,11 @@ fn write_sv(
         if let Some(p2) = v.pos2 {
             ends.push((v.ctg2.as_str(), p2));
         }
-        let near = ins.nearby(&ends);
+        let own: HashSet<(&str, &str)> = s
+            .iter()
+            .map(|m| (m.source.as_str(), m.name.as_str()))
+            .collect();
+        let near = ins.nearby(&ends, &own);
         if !near.is_empty() {
             info.push_str(&format!(";ins_nearby={}", join_counts(&near)));
         }

@@ -344,6 +344,66 @@ fn merge_ins_nearby() {
 }
 
 #[test]
+fn merge_ins_nearby_excludes_own_reads() {
+    // A T insertion seen as three splits (s1-s3) and one CIGAR ins (i1) forms
+    // one call; i1 is its own read and is not counted. Nearby ins records whose
+    // own clusters stay apart (pos2 >100 bp off): s1's second breakend (an ins
+    // record of the same read, hence also the call's own) and N's n1, which
+    // alone counts.
+    let input = [
+        rec("chr1\t1000\t>>\tchr1\t1010", "s1", '+', "T", "split", ""),
+        rec("chr1\t1002\t>>\tchr1\t1012", "s2", '-', "T", "split", ""),
+        rec("chr1\t1004\t>>\tchr1\t1014", "s3", '+', "T", "split", ""),
+        rec(
+            "chr1\t1001\t>>\tchr1\t1008",
+            "i1",
+            '-',
+            "T",
+            "ins",
+            ";inslen=2000",
+        ),
+        rec(
+            "chr1\t1050\t>>\tchr1\t1200",
+            "s1",
+            '+',
+            "T",
+            "ins",
+            ";inslen=2000",
+        ),
+        rec(
+            "chr1\t1060\t>>\tchr1\t1210",
+            "n1",
+            '+',
+            "N",
+            "ins",
+            ";inslen=2000",
+        ),
+    ]
+    .concat();
+    let got = run_merge_stdin(&input, &["-c", "3"]);
+    let loc = "chr1\t1002\t>>\tchr1\t1012";
+    assert_eq!(
+        tag_of(&got, loc, "ctype_count").as_deref(),
+        Some("ins:1|split:3"),
+        "{got}"
+    );
+    assert_eq!(
+        tag_of(&got, loc, "ins_nearby").as_deref(),
+        Some("N:1"),
+        "{got}"
+    );
+    // Without n1, nothing else is nearby: no tag.
+    let input: String = input
+        .lines()
+        .filter(|l| !l.contains("\tn1\t"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    let got = run_merge_stdin(&input, &["-c", "3"]);
+    assert!(got.contains(loc), "{got}");
+    assert_eq!(tag_of(&got, loc, "ins_nearby"), None, "{got}");
+}
+
+#[test]
 fn merge_min_mapq_filters() {
     // Three clips clustering at chr1:1000; qlo has col-7 mapq 5. -q drops input
     // breakends whose col-7 mapq is below the threshold before clustering.

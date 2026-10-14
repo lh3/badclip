@@ -18,8 +18,9 @@
 //! inter-contig joins have no distance and pass. Inversions (`ori` `><`/`<>`)
 //! are exempt from the distance test unless `-I` is given. Calls whose
 //! `ins_nearby=` counts (summed over sources; absent = 0) exceed `-i` are dropped
-//! (a negative `-i` lifts that cap), so by default (`-i 0`) any call with an
-//! insertion nearby is dropped.
+//! (a negative `-i` lifts that cap), so by default (`-i 0`) any call carrying
+//! `ins_nearby` is dropped. `merge` writes that tag only on calls with a
+//! `split`/`trim` read, so pure `del`/`ins` calls always pass.
 
 use std::io::{self, BufRead, Write};
 

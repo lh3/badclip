@@ -356,7 +356,9 @@ ctg1   pos1   ori   ctg2   pos2   .   count   strand   avg_mapq=q1,q2;count=..;c
   distinct `ins` reads in the whole input (any source, after `-Q`/`-q`/`-p`,
   whether or not their own call is reported) within `-w` bp of either printed
   end — an `ins` line `ctg L >> ctg R` is near `(ctg, p)` when
-  `L - w <= p <= R + w` — per source, alphabetical; omitted when none. A long
+  `L - w <= p <= R + w` — per source, alphabetical; omitted when none. The
+  call's own reads (same source and name) are not counted, so an insertion
+  seen as both `split` and `ins` reads does not flag itself. A long
   germline insertion whose sequence maps elsewhere can masquerade as a
   translocation; `ins` reads nearby (e.g. from the matched normal) flag it.
 - `reads=src:name,…|…` — the supporting read names, stratified by `source=` the
@@ -443,8 +445,9 @@ badclip fltcnt [OPTIONS] [INPUT]
 - `-I` — apply `-l` to inversions (`ori` `><`/`<>`) too; by default they pass
   regardless of distance.
 - `-i INT` — maximum `ins_nearby` reads, summed over its sources (default 0,
-  i.e. drop any call with an insertion nearby; a call without the tag has 0;
-  `-1` = no limit).
+  i.e. drop any call carrying `ins_nearby`; `-1` = no limit). A call without the
+  tag has 0 — `merge` writes it only on calls with `split`/`trim` reads, so calls
+  made only of CIGAR `del`/`ins` reads always pass.
 - `--src LIST` — comma-separated sources tested by `-c`/`-s` (default: every
   source ending with `.flt`).
 - `--rest LIST` — comma-separated sources tested by `-r` (default: every source
