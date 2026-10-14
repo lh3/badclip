@@ -36,3 +36,24 @@ pub fn open_reader(path: &str) -> io::Result<Box<dyn BufRead>> {
         Ok(Box::new(reader))
     }
 }
+
+/// Fail if more than one of `inputs` is `"-"`: they would all read the one
+/// stdin (the first would consume it, or both would lock it and hang).
+pub fn check_stdin(inputs: &[&str]) -> io::Result<()> {
+    if inputs.iter().filter(|p| **p == "-").count() > 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "only one input can be `-` (stdin)",
+        ));
+    }
+    Ok(())
+}
+
+/// An `InvalidData` error at line `lineno` (1-based) of input `path`.
+pub fn line_error(path: &str, lineno: usize, msg: impl std::fmt::Display) -> io::Error {
+    let path = if path == "-" { "stdin" } else { path };
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("{path}:{lineno}: {msg}"),
+    )
+}

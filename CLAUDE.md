@@ -22,7 +22,8 @@ cargo run -- extract --paf test/join02.paf   # PAF
 ## Layout
 
 - `src/main.rs`   — clap CLI, subcommand dispatch. New subcommands slot in here.
-- `src/io.rs`     — `open_reader`: stdin/file + transparent gzip (magic-byte peek); PAF only.
+- `src/io.rs`     — `open_reader`: stdin/file + transparent gzip (magic-byte peek), used by every text input (all but `extract`'s SAM/BAM/CRAM path); `check_stdin` (at most one input may be `-`: `fltbnd`, `fltreg`, `extract --alt`); `line_error` (`path:line: msg` errors).
+- `src/record.rs` — shared `extract`-record helpers: `Ctype` (`from_info` requires a known `ctype=`; used by `getfa`/`fltbnd`/`merge`).
 - `src/paf.rs`    — `Hit`/`Gap` structs, `Strand`, `parse_paf_line` (keeps `tp:A:P`/`I`; gaps from `cg:Z`), `parse_cigar`, `find_gaps` (long CIGAR indels + insertion normalization).
 - `src/aln.rs`    — SAM/BAM/CRAM input via noodles-util (format autodetected): build `Hit`s from a primary record + its `SA` tag; a supplementary record yields only its own gaps. CRAM needs `-r`.
 - `src/extract.rs`— dispatch (alignment file vs `--paf`), grouping, sorting, trim/split/del/ins emission; shared `emit_read`/`emit_gaps`/`passes_filter`, `SeqView`.
@@ -32,6 +33,13 @@ cargo run -- extract --paf test/join02.paf   # PAF
 - `src/fltreg.rs` — `fltreg` subcommand: drop `extract`/`merge` breakends that fall in BED regions.
 - `src/fltcnt.rs` — `fltcnt` subcommand: keep `merge` calls by raw/filtered source read counts.
 - `tests/extract.rs`, `tests/merge.rs`, `tests/fltreg.rs`, `tests/fltcnt.rs` — end-to-end tests driving the compiled binary.
+
+Cross-subcommand conventions: every `run` ends with `out.flush()?` (a final
+write error — full disk, closed pipe — is reported, not lost in `BufWriter`'s
+drop); length options take a `k`/`m`/`g` suffix (`main.rs::parse_num`:
+`extract -c/-g/-a/-f/-e`, `fltbnd -l`, `merge -w`, `fltreg -l`, `fltcnt -l`);
+`getfa`/`fltbnd`/`merge` require `ctype` (absent — pre-0.2 output — or unknown
+is a `path:line:` error, even on a line a filter would drop).
 - `test/`         — `*.paf` inputs, `*.msv` (minisv) references, `bam01*`/`cram01*`/`gap01*`/`flt01*`/`merge01*` fixtures/goldens, `fltreg01.bed`, `minisv.js`.
 
 ## `getfa`
@@ -43,8 +51,8 @@ input → print help) to FASTA. For each eseq window of a record it emits
 `leftFlank`/`rightFlank`) followed by the bases. `code` is the breakend type:
 `T` trim, `S` split, `D` del, and for an insertion's two windows `L` (`eseq`,
 its first breakpoint along the read) then `R` (`eseq2`). A record without
-`ctype` (pre-0.2 output) is a trim if `ctg2` is `.`, else a split; an unknown
-`ctype` is skipped. Records lacking an eseq are skipped. `-Q` (default 20)
+`ctype` (pre-0.2 output) or with an unknown one is an error (`Ctype::from_info`);
+a line with < 9 columns is skipped. Records lacking an eseq are skipped. `-Q` (default 20)
 additionally drops records whose `equal` quality — the lower of
 `equal`/`equal2`, so an insertion emits both windows or neither — is below the
 threshold; records without an `equal` tag are kept. The parser
@@ -64,17 +72,23 @@ junction is protected. Survivors are printed verbatim. The PAF qname is
 `getfa`'s name and its lines are in the same order as the FASTA records (a
 subset), so both files stream with a one-line PAF lookahead — no in-memory load;
 every window's PAF lines are consumed even once one is protected, to stay in
-sync. Either input may be `-` (stdin); missing input → help (via
+sync. At the end, a PAF line left unconsumed (blank lines skipped,
+`fltbnd.rs::next_paf`) is an **error**: it matched no window in order (input
+filtered after `getfa`, PAF reordered), so every breakend after the stall was
+judged novel. A window `getfa -Q` dropped has no PAF lines and is novel to a
+lower `fltbnd -Q` — undetectable, so the docs say to use the same `-Q`. Either
+input may be `-` (stdin), not both (`io::check_stdin`); missing input → help (via
 `main.rs::print_subcommand_help`, shared with `extract`/`getfa`). Fixtures:
-`test/flt01.clip` (no `ctype` — exercises the inference), `test/flt01.rb3.paf`.
+`test/flt01.clip`, `test/flt01.rb3.paf`.
 
 `-Q` (default 20) additionally drops any line whose `equal` quality (lower of
 `equal`/`equal2`) is below the threshold (in both modes; lines without an
 `equal` tag are kept). The check runs **after** the PAF lookahead consumes that
 line's entries, so the stream stays in sync regardless of how the PAF was built.
 
-`-s STR` flips the mode: print **all** input lines and rewrite the `source=` INFO
-tag to `STR` on the survivors (kept/novel), leaving dropped lines (no `eseq`, or
+`-s STR` flips the mode: print all input lines (except those `-Q` drops) and
+rewrite the `source=` tag of the INFO column (col 9, not the last column) to
+`STR` on the survivors (kept/novel), leaving dropped lines (no `eseq`, or
 pangenome-explained) verbatim — tagging novel calls distinctly for a downstream
 `merge` (`fltbnd.rs::relabel_source`). Without `-s`, only survivors are printed
 verbatim.
@@ -83,7 +97,7 @@ verbatim.
 
 Collapses per-read `extract` breakends into consensus SV calls — a simplified
 `gc_cmd_merge` from `minisv.js`. badclip has only the breakend type (no
-`SVTYPE`/`SVLEN`), no per-sample `source`, and no centromere/RT annotation, so
+`SVTYPE`/`SVLEN`) and no centromere/RT annotation, so
 minisv's SVTYPE/SVLEN checks, the `-d` filter, the centromere filter (`-e`), and
 the RT branch (`-r`/`-R`) are all dropped. Unlike minisv (which needs an upstream
 `sort -k1,1 -k2,2n`), `merge` **loads all records into memory and sorts them
@@ -99,12 +113,13 @@ sweep moves past its `pos_max + -w`. `same_sv` requires: same `ctg`; compatible
 `ori` (equal, or the inversion pair `><`↔`<>`); `|pos−pos| ≤ -w`; same `ctg2`;
 and `|pos2−pos2| ≤ -w` **skipped when either `pos2` is absent** (a clip's `.`
 mate — reproduces minisv's `NaN` comparison, so clips cluster on `ctg2`/`pos`
-alone). Per-cluster comparisons are capped at `-C` members (a deterministic cap
+alone). Per-cluster comparisons are capped at `-M` members (a deterministic cap
 replacing minisv's reservoir sampling — deep-cluster counts are capped, not
-scaled), and the active-cluster list is bounded by `-A`. Clustering ignores
-`ctype` (`Rec::ctype`, a `Ctype` enum; missing/unknown → trim if `ctg2` is `.`,
-else split, as in `getfa`): a CIGAR `del` clusters with split-read deletions at
-the same coordinates, and the call reports the mix (`ctype_count`).
+scaled; minisv's `-C`, which badclip uses for the `-m` per-line filter), and the
+active-cluster list is bounded by `-A`. Clustering ignores `ctype` (`Rec::ctype`,
+`record::Ctype`; required — `parse_rec` errors with `path:line:` on a missing or
+unknown one before any filter): a CIGAR `del` clusters with split-read deletions
+at the same coordinates, and the call reports the mix (`ctype_count`).
 
 Flags mirror minisv's kept subset: `-c` min read count (2), `-s` min count on
 each strand (0), `-w` window bp (100), `-A` max active clusters (100), `-M` max
@@ -176,7 +191,7 @@ swaps only the input parser (`parse_rec_merge`) and output emitter
 
 - **Input parsing** (`-m`): mapq from `avg_mapq=q1,q2` (col 7 is a count here,
   not mapq); per-strand read counts from `count=` summed over its
-  `|`-separated `[src:]f,r` entries (source-prefix optional via `sum_count`, so
+  `|`-separated `[src:]f,r` entries (source-prefix optional via `parse_count`, so
   `-m` output re-feeds cleanly); `count_fr`/`count_rf` read straight from those
   tags. `-Q` is a no-op (no `equal` tag). `-q`/`-p` apply to the
   `avg_mapq`-derived `max`/`min` (clips exempt from `-p`).
@@ -201,14 +216,14 @@ swaps only the input parser (`parse_rec_merge`) and output emitter
   `-m`-parseable, so merges chain (col-7 then falls back to member count, since
   `count=F,R` drops the source labels).
 
-The `-C`/`-S`/`-Q`/`-q`/`-p` per-line filters and `-c`/`-s` cluster filters are
-all no-ops-or-unchanged in the default (non-`-m`) extract path.
+The `-C`/`-S` per-line filters are no-ops in the default (non-`-m`) path; there
+`-Q`/`-q`/`-p` test the `equal`/col-7/`mapq=` values described above.
 
 ## `fltreg`
 
 Drops `extract`/`merge` output lines whose breakends land in BED regions.
-`fltreg [-l INT] <in> <bed>` (both positional; `-` = stdin for `<in>`, gzip auto
-on both; either missing → help). Since both output formats share the 9 columns, one filter
+`fltreg [-l NUM] <in> <bed>` (both positional; either may be `-` = stdin, not
+both; gzip auto on both; either missing → help). Since both output formats share the 9 columns, one filter
 serves both: a line is dropped if **either** endpoint — `(ctg1,pos1)` (cols 0,1)
 or, when present, `(ctg2,pos2)` (cols 3,4) — falls in a region; a clip
 (`ctg2="."`) tests only endpoint 1. Survivors are printed verbatim; lines whose
@@ -292,7 +307,8 @@ stdin). Both paths build a `Vec<Hit>` per read and feed the shared `emit_read`.
     whose **primary** hit lands on an ALT contig is skipped entirely; ALT hits in
     the `SA` tag are dropped before breakends form (a supplementary record on an
     ALT contig, or whose primary — first `SA` entry — is, is skipped). No-op for
-    `--paf`.
+    `--paf`. `--alt -` reads stdin, refused when the input is `-` too (both
+    would lock stdin and hang).
   - noodles crates: util 0.82 (feature `alignment`) / sam 0.87 / core 0.20 /
     cram 0.96 / fasta 0.64.
 
@@ -430,7 +446,7 @@ flipped (`source` is per-read and `elen`/`eseq`, appended for BAM, do not swap):
   (left trim, splits, right trim), resetting per read (`emit_read`'s local
   counter; hidden trims still count); for del/ins, the read-forward offset.
 - `n_aln=N` — number of alignments (primary + supplementary) for the read that
-  passed the `-q`/`-a` filters, i.e. `hits.len()` at `emit_read`. A read-level
+  passed the `-a` filter, i.e. `hits.len()` at `emit_read`. A read-level
   constant, the same on every breakend of the read.
 - `aln_len=len1,len2` — alignment block length (PAF col 11) of each hit; for a
   clip `len2 = 0`.
@@ -447,7 +463,10 @@ flipped (`source` is per-read and `elen`/`eseq`, appended for BAM, do not swap):
 - **Right trim** (`-T`, `last.qlen - last.qe > c`): `last.ctg fte(last) arrow_r.  .  .  qname mapq strand INFO`
 - **Split** (each adjacent pair `y0`→`y1`): endpoint `c0 = (y0.ctg, fte(y0), ori(y0), y0.alen)`
   joins `c1 = (y1.ctg, fts(y1), ori(y1), y1.alen)`. Canonicalize so the smaller
-  `(ctg, pos)` is first; if swapped, invert both arrows, swap the two `alen`
+  `(ctg, pos)` is first — on a tie (same ctg and pos) swap iff `ori(y0)` is `<`,
+  so a touching junction is `>>`/`+` from a `+` read and `>>`/`-` from a `-`
+  read (minisv swaps on every tie, giving `<<` vs `>>`, which never cluster);
+  if swapped, invert both arrows, swap the two `alen`
   values, the two `mapq` values, and the `qlen` `left`/`right`, and set the
   `strand` column to `-` (else `+`). The field-7 `mapq` column is `max(y0, y1)`.
 

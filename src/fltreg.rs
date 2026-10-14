@@ -103,5 +103,6 @@ pub fn run(input: &str, bed: &str, margin: i64) -> io::Result<()> {
             writeln!(out, "{line}")?;
         }
     }
+    out.flush()?;
     Ok(())
 }

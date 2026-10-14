@@ -4,7 +4,7 @@
 //! A `merge` line's `count=` INFO tag lists, per `source=`, the forward,reverse
 //! read counts (`count=S1:f,r|S2:f,r`). Sources fall into two groups: `--src`
 //! (comma-separated names; default: every source ending with `.flt`, i.e. the
-//! `flteseq -s` survivors) and `--rest` (comma-separated names; default: every
+//! `fltbnd -s` survivors) and `--rest` (comma-separated names; default: every
 //! source not in `--src`). Each group's counts are summed over its sources. A
 //! line with no source in either group (e.g. `merge -m` output, whose `count=`
 //! has no source labels) is an error.
@@ -24,7 +24,7 @@
 
 use std::io::{self, BufRead, Write};
 
-use crate::io::open_reader;
+use crate::io::{line_error, open_reader};
 
 pub struct FltcntOpts {
     pub input: String,
@@ -131,13 +131,11 @@ pub fn run(o: &FltcntOpts) -> io::Result<()> {
         let counts = f.get(8).and_then(|info| parse_counts(info, o));
         let Some(Counts { src, rest }) = counts.filter(|c| c.src.is_some() || c.rest.is_some())
         else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "line {}: no --src or --rest source in `count=`; \
-                     specify the sources with --src and --rest",
-                    lineno + 1,
-                ),
+            return Err(line_error(
+                &o.input,
+                lineno + 1,
+                "no --src or --rest source in `count=`; \
+                 specify the sources with --src and --rest",
             ));
         };
         seen_src |= src.is_some();
@@ -168,6 +166,7 @@ pub fn run(o: &FltcntOpts) -> io::Result<()> {
         }
         writeln!(out, "{line}")?;
     }
+    out.flush()?;
     if !seen_src {
         let src = if o.src.is_empty() {
             "*.flt".to_string()

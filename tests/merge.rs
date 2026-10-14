@@ -138,9 +138,9 @@ fn merge_min_equal_filters() {
     // Three clips clustering at chr1:1000; qlow has equal=5. -Q drops input
     // breakends whose `equal` is below the threshold before clustering.
     let input = "\
-chr1\t1000\t>.\t.\t.\tqfwd\t60\t+\tsource=foo;equal=30
-chr1\t1000\t>.\t.\t.\tqrev\t60\t-\tsource=foo;equal=30
-chr1\t1000\t>.\t.\t.\tqlow\t60\t+\tsource=foo;equal=5
+chr1\t1000\t>.\t.\t.\tqfwd\t60\t+\tsource=foo;ctype=trim;equal=30
+chr1\t1000\t>.\t.\t.\tqrev\t60\t-\tsource=foo;ctype=trim;equal=30
+chr1\t1000\t>.\t.\t.\tqlow\t60\t+\tsource=foo;ctype=trim;equal=5
 ";
     // Default -Q 20: qlow (equal=5) is dropped before clustering.
     let got = run_merge_stdin(input, &["-c", "1", "-s", "1"]);
@@ -211,25 +211,30 @@ fn merge_ctype_count() {
 }
 
 #[test]
-fn merge_ctype_inferred() {
-    // Input without ctype (pre-0.2): a mate-less line is a trim, else a split.
+fn merge_requires_ctype() {
+    // Input without ctype (pre-0.2 extract output) is an error naming the file
+    // and line, even for a line the filters would drop (mapq 0 fails -p 10).
     let input = "\
-chr1\t100\t>.\t.\t.\tc1\t60\t+\tsource=foo;mapq=60,0
-chr1\t105\t>.\t.\t.\tc2\t60\t-\tsource=foo;mapq=60,0
-chr1\t500\t>>\tchr2\t50\tj1\t60\t+\tsource=foo;mapq=60,60
-chr1\t505\t>>\tchr2\t55\tj2\t60\t-\tsource=foo;mapq=60,60
+chr1\t100\t>.\t.\t.\tc1\t60\t+\tsource=foo;ctype=trim;mapq=60,0
+chr1\t500\t>>\tchr2\t50\tj1\t60\t+\tsource=foo;mapq=0,0
 ";
-    let got = run_merge_stdin(input, &[]);
-    assert_eq!(
-        tag_of(&got, "chr1\t10", "ctype_count").as_deref(),
-        Some("trim:2"),
-        "{got}"
-    );
-    assert_eq!(
-        tag_of(&got, "chr1\t50", "ctype_count").as_deref(),
-        Some("split:2"),
-        "{got}"
-    );
+    let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
+        .args(["merge", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("stdin:2: no `ctype=` tag"), "{err}");
 }
 
 #[test]
@@ -408,9 +413,9 @@ fn merge_min_mapq_filters() {
     // Three clips clustering at chr1:1000; qlo has col-7 mapq 5. -q drops input
     // breakends whose col-7 mapq is below the threshold before clustering.
     let input = "\
-chr1\t1000\t>.\t.\t.\tqhi\t60\t+\tsource=foo
-chr1\t1000\t>.\t.\t.\tqhi2\t60\t-\tsource=foo
-chr1\t1000\t>.\t.\t.\tqlo\t5\t+\tsource=foo
+chr1\t1000\t>.\t.\t.\tqhi\t60\t+\tsource=foo;ctype=trim
+chr1\t1000\t>.\t.\t.\tqhi2\t60\t-\tsource=foo;ctype=trim
+chr1\t1000\t>.\t.\t.\tqlo\t5\t+\tsource=foo;ctype=trim
 ";
     // -q 20 drops qlo (mapq 5); qhi/qhi2 remain.
     let got = run_merge_stdin(input, &["-c", "1", "-s", "1", "-q", "20"]);
@@ -432,11 +437,11 @@ fn merge_min_mapq_min_filters() {
     // pair has a smaller value of 3; jhi's is 40. -p drops join breakends whose
     // *smaller* per-hit mapq is below the threshold, but never a clip (mapq2=0).
     let input = "\
-chr1\t1000\t>>\tchr2\t2000\tjhi\t60\t+\tsource=foo;mapq=60,40
-chr1\t1000\t>>\tchr2\t2000\tjhi2\t60\t-\tsource=foo;mapq=40,60
-chr1\t1000\t>>\tchr2\t2000\tjlo\t60\t+\tsource=foo;mapq=60,3
-chr1\t3000\t>.\t.\t.\tcliplo\t60\t+\tsource=foo;mapq=3,0
-chr1\t3000\t>.\t.\t.\tcliplo2\t60\t-\tsource=foo;mapq=3,0
+chr1\t1000\t>>\tchr2\t2000\tjhi\t60\t+\tsource=foo;ctype=split;mapq=60,40
+chr1\t1000\t>>\tchr2\t2000\tjhi2\t60\t-\tsource=foo;ctype=split;mapq=40,60
+chr1\t1000\t>>\tchr2\t2000\tjlo\t60\t+\tsource=foo;ctype=split;mapq=60,3
+chr1\t3000\t>.\t.\t.\tcliplo\t60\t+\tsource=foo;ctype=trim;mapq=3,0
+chr1\t3000\t>.\t.\t.\tcliplo2\t60\t-\tsource=foo;ctype=trim;mapq=3,0
 ";
     // -p 20 drops jlo (min pair 3); jhi/jhi2 remain and the clip is exempt.
     let got = run_merge_stdin(input, &["-c", "1", "-s", "1", "-p", "20"]);
@@ -460,9 +465,9 @@ fn merge_avg_mapq_per_end() {
     // (an inversion pair) with asymmetric per-hit mapqs — since the INFO pair is
     // already endpoint-aligned, the "<>" member must NOT swap sides.
     let input = "\
-chr1\t1000\t><\tchr1\t5000\tri1\t60\t+\tsource=foo;mapq=60,20
-chr1\t1005\t<>\tchr1\t5005\tri2\t62\t-\tsource=foo;mapq=62,22
-chr1\t1010\t><\tchr1\t4995\tri3\t58\t+\tsource=foo;mapq=58,18
+chr1\t1000\t><\tchr1\t5000\tri1\t60\t+\tsource=foo;ctype=split;mapq=60,20
+chr1\t1005\t<>\tchr1\t5005\tri2\t62\t-\tsource=foo;ctype=split;mapq=62,22
+chr1\t1010\t><\tchr1\t4995\tri3\t58\t+\tsource=foo;ctype=split;mapq=58,18
 ";
     // q1 = mean(60,62,58) = 60; q2 = mean(20,22,18) = 20.
     let got = run_merge_stdin(input, &["-p", "0"]);
@@ -473,9 +478,9 @@ chr1\t1010\t><\tchr1\t4995\tri3\t58\t+\tsource=foo;mapq=58,18
 
     // A clip cluster reports q2=0 (no second end).
     let clips = "\
-chr1\t2000\t>.\t.\t.\trc1\t40\t+\tsource=foo;mapq=40,0
-chr1\t2005\t>.\t.\t.\trc2\t20\t-\tsource=foo;mapq=20,0
-chr1\t2010\t>.\t.\t.\trc3\t60\t+\tsource=foo;mapq=60,0
+chr1\t2000\t>.\t.\t.\trc1\t40\t+\tsource=foo;ctype=trim;mapq=40,0
+chr1\t2005\t>.\t.\t.\trc2\t20\t-\tsource=foo;ctype=trim;mapq=20,0
+chr1\t2010\t>.\t.\t.\trc3\t60\t+\tsource=foo;ctype=trim;mapq=60,0
 ";
     let cg = run_merge_stdin(clips, &[]);
     assert!(
@@ -565,5 +570,24 @@ fn merge_no_input_shows_help() {
     assert!(
         help.contains("Usage: badclip merge"),
         "expected usage, got: {help}"
+    );
+}
+
+#[test]
+fn merge_win_size_suffix() {
+    // Length options take a k/m/g suffix: -w 0.1k is the default -w 100.
+    let run = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_badclip"))
+            .arg("merge")
+            .args(args)
+            .arg(test_dir().join("merge01.clip"))
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap()
+    };
+    assert_eq!(
+        run(&["-c", "3", "-s", "1", "-w", "0.1k"]),
+        run(&["-c", "3", "-s", "1"])
     );
 }

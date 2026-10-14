@@ -130,6 +130,8 @@ chr2\t0\t>.\t.\t.\tneg_start\t60\t+\tsrc
         assert!(got.contains(kept), "{kept} should be kept:\n{got}");
     }
     assert_eq!(got.lines().count(), 3, "expected three survivors:\n{got}");
+    // A k suffix: 0.1k = 100.
+    assert_eq!(run_fltreg(input, &["-l", "0.1k"]), got);
 
     // Default -l 0: none of the padded-only positions are filtered.
     let got = run_fltreg(input, &[]);

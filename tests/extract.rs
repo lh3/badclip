@@ -664,16 +664,38 @@ chrE\t70\t>>\tchrE\t74\tread5\t60\t-\tctype=ins;idx=400;inslen=1000;elen=2,0,1;e
 }
 
 #[test]
-fn getfa_infers_missing_ctype() {
-    // Pre-0.2 extract output has no ctype: a mate-less line is a trim, else a split.
-    let input = "\
-chrA\t1\t>.\t.\t.\tr1\t60\t+\tidx=0;elen=1,0,1;eseq=AC
-chrA\t1\t>>\tchrB\t2\tr2\t60\t+\tidx=0;elen=1,0,1;eseq=GT
-";
-    assert_eq!(
-        run_getfa_stdin(input.as_bytes()),
-        ">r1_0_1_1_T\nAC\n>r2_0_1_1_S\nGT\n"
-    );
+fn getfa_requires_ctype() {
+    // Pre-0.2 extract output has no ctype; an unknown ctype is as bad. Both are
+    // errors naming the line.
+    for (info, msg) in [
+        ("idx=0;elen=1,0,1;eseq=GT", "stdin:2: no `ctype=` tag"),
+        (
+            "ctype=dup;idx=0;elen=1,0,1;eseq=GT",
+            "stdin:2: unknown ctype `dup`",
+        ),
+    ] {
+        let input = format!(
+            "chrA\t1\t>.\t.\t.\tr1\t60\t+\tctype=trim;idx=0;elen=1,0,1;eseq=AC\n\
+             chrA\t1\t>>\tchrB\t2\tr2\t60\t+\t{info}\n"
+        );
+        let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
+            .args(["getfa", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(!out.status.success());
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(msg), "{err}");
+    }
 }
 
 #[test]
@@ -681,9 +703,9 @@ fn getfa_min_equal_filters() {
     // -Q (default 20) drops records whose `equal` is below the threshold; records
     // without an `equal` tag are kept.
     let input = "\
-chrA\t1\t>.\t.\t.\trlow\t60\t+\tidx=0;elen=5,0,7;equal=10;eseq=AAAA
-chrB\t2\t>.\t.\t.\trhigh\t60\t+\tidx=0;elen=5,0,7;equal=30;eseq=CCCC
-chrC\t3\t>.\t.\t.\trnoq\t60\t+\tidx=0;elen=5,0,7;eseq=GGGG
+chrA\t1\t>.\t.\t.\trlow\t60\t+\tctype=trim;idx=0;elen=5,0,7;equal=10;eseq=AAAA
+chrB\t2\t>.\t.\t.\trhigh\t60\t+\tctype=trim;idx=0;elen=5,0,7;equal=30;eseq=CCCC
+chrC\t3\t>.\t.\t.\trnoq\t60\t+\tctype=trim;idx=0;elen=5,0,7;eseq=GGGG
 chrD\t4\t>>\tchrD\t4\trins\t60\t+\tctype=ins;idx=9;elen=1,0,1;equal=30;eseq=AC;elen2=1,0,1;equal2=10;eseq2=GT
 ";
     // Default -Q 20: rlow (equal=10) dropped; rhigh (equal=30) and rnoq (no
@@ -726,8 +748,8 @@ fn fltbnd_filters() {
         .expect("failed to run badclip fltbnd");
     assert!(out.status.success());
     let expected = "\
-chrD\t4\t<<\tchrE\t5\treadC\t60\t-\tsource=foo;idx=0;aln_len=1,1;qlen=1,0,1;mapq=60,60;elen=250,0,250;eseq=CCCC
-chrF\t6\t>.\t.\t.\treadD\t60\t+\tsource=foo;idx=0;aln_len=1,0;qlen=1,0,1;mapq=60,0;elen=250,0,250;eseq=GGGG
+chrD\t4\t<<\tchrE\t5\treadC\t60\t-\tsource=foo;ctype=split;idx=0;aln_len=1,1;qlen=1,0,1;mapq=60,60;elen=250,0,250;eseq=CCCC
+chrF\t6\t>.\t.\t.\treadD\t60\t+\tsource=foo;ctype=trim;idx=0;aln_len=1,0;qlen=1,0,1;mapq=60,0;elen=250,0,250;eseq=GGGG
 ";
     assert_eq!(String::from_utf8(out.stdout).unwrap(), expected);
 }
@@ -747,11 +769,11 @@ fn fltbnd_source_relabel() {
         .expect("failed to run badclip fltbnd");
     assert!(out.status.success());
     let expected = "\
-chrA\t1\t>.\t.\t.\treadA\t60\t+\tsource=foo;idx=0;aln_len=100,0;qlen=100,0,60;mapq=60,0;elen=100,0,60
-chrB\t2\t>>\tchrC\t3\treadB\t60\t+\tsource=foo;idx=0;aln_len=1,1;qlen=1,0,1;mapq=60,60;elen=250,0,250;eseq=AAAA
-chrD\t4\t<<\tchrE\t5\treadC\t60\t-\tsource=novel;idx=0;aln_len=1,1;qlen=1,0,1;mapq=60,60;elen=250,0,250;eseq=CCCC
-chrF\t6\t>.\t.\t.\treadD\t60\t+\tsource=novel;idx=0;aln_len=1,0;qlen=1,0,1;mapq=60,0;elen=250,0,250;eseq=GGGG
-chrG\t7\t>>\tchrH\t8\treadE\t60\t+\tsource=foo;idx=0;aln_len=1,1;qlen=1,0,1;mapq=60,60;elen=250,0,250;eseq=TTTT
+chrA\t1\t>.\t.\t.\treadA\t60\t+\tsource=foo;ctype=trim;idx=0;aln_len=100,0;qlen=100,0,60;mapq=60,0;elen=100,0,60
+chrB\t2\t>>\tchrC\t3\treadB\t60\t+\tsource=foo;ctype=split;idx=0;aln_len=1,1;qlen=1,0,1;mapq=60,60;elen=250,0,250;eseq=AAAA
+chrD\t4\t<<\tchrE\t5\treadC\t60\t-\tsource=novel;ctype=split;idx=0;aln_len=1,1;qlen=1,0,1;mapq=60,60;elen=250,0,250;eseq=CCCC
+chrF\t6\t>.\t.\t.\treadD\t60\t+\tsource=novel;ctype=trim;idx=0;aln_len=1,0;qlen=1,0,1;mapq=60,0;elen=250,0,250;eseq=GGGG
+chrG\t7\t>>\tchrH\t8\treadE\t60\t+\tsource=foo;ctype=split;idx=0;aln_len=1,1;qlen=1,0,1;mapq=60,60;elen=250,0,250;eseq=TTTT
 ";
     assert_eq!(String::from_utf8(out.stdout).unwrap(), expected);
 }
@@ -766,8 +788,8 @@ fn fltbnd_min_equal_filters() {
     std::fs::write(&paf, "").unwrap(); // empty PAF -> no line is "protected"
     std::fs::write(
         &clip,
-        "chrA\t1\t>.\t.\t.\trkeep\t60\t+\tsource=foo;idx=0;elen=250,0,250;equal=30;eseq=AAAA\n\
-         chrB\t2\t>.\t.\t.\trlow\t60\t+\tsource=foo;idx=0;elen=250,0,250;equal=5;eseq=CCCC\n",
+        "chrA\t1\t>.\t.\t.\trkeep\t60\t+\tsource=foo;ctype=trim;idx=0;elen=250,0,250;equal=30;eseq=AAAA\n\
+         chrB\t2\t>.\t.\t.\trlow\t60\t+\tsource=foo;ctype=trim;idx=0;elen=250,0,250;equal=5;eseq=CCCC\n",
     )
     .unwrap();
 
@@ -1091,4 +1113,109 @@ fn gap01_bam_paf_parity() {
         }
     }
     assert_eq!(n_ins, 2, "fixture has two insertions");
+}
+
+#[test]
+fn split_tie_orientation_is_strand_independent() {
+    // Touching hits (a clean insertion): both ends of the junction sit at one
+    // offset. The '+' and '-' reads must both give `>>` (strands '+' and '-'),
+    // so merge pairs them into one call with reads on both strands.
+    let paf = "\
+rp\t2000\t0\t1000\t+\tchrA\t100000\t5000\t6000\t1000\t1000\t60\ttp:A:P
+rp\t2000\t1000\t2000\t+\tchrA\t100000\t6000\t7000\t1000\t1000\t60\ttp:A:P
+rm\t2000\t0\t1000\t-\tchrA\t100000\t6000\t7000\t1000\t1000\t60\ttp:A:P
+rm\t2000\t1000\t2000\t-\tchrA\t100000\t5000\t6000\t1000\t1000\t60\ttp:A:P
+";
+    let got = run_extract_stdin(paf.as_bytes());
+    let cols: Vec<String> = got
+        .lines()
+        .map(|l| l.split('\t').take(8).collect::<Vec<_>>().join("\t"))
+        .collect();
+    assert_eq!(
+        cols,
+        [
+            "chrA\t6000\t>>\tchrA\t6000\trp\t60\t+",
+            "chrA\t6000\t>>\tchrA\t6000\trm\t60\t-",
+        ]
+    );
+    let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
+        .args(["merge", "-s", "1", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(got.as_bytes())
+        .unwrap();
+    let merged = String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap();
+    assert_eq!(merged.lines().count(), 1, "{merged}");
+    assert!(merged.contains(";count=foo:1,1;"), "{merged}");
+}
+
+#[test]
+fn fltbnd_paf_out_of_sync_is_an_error() {
+    // The PAF has readB's window but the input doesn't (e.g. it was filtered
+    // after getfa): the lookahead stalls on readB, so readE would pass as novel.
+    let dir = env!("CARGO_TARGET_TMPDIR");
+    let clip = format!("{dir}/fltbnd_sync.clip");
+    let full = std::fs::read_to_string(test_dir().join("flt01.clip")).unwrap();
+    let sub: String = full
+        .lines()
+        .filter(|l| !l.contains("readB"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    std::fs::write(&clip, sub).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_badclip"))
+        .args(["fltbnd", &clip])
+        .arg(test_dir().join("flt01.rb3.paf"))
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("`readB_0_250_250_S`"), "{err}");
+}
+
+#[test]
+fn fltbnd_relabel_rewrites_column_9() {
+    // `-s` relabels the INFO column (9), not the last one; extra columns stay.
+    let dir = env!("CARGO_TARGET_TMPDIR");
+    let clip = format!("{dir}/fltbnd_col9.clip");
+    let paf = format!("{dir}/fltbnd_col9_empty.paf");
+    std::fs::write(&paf, "").unwrap();
+    std::fs::write(
+        &clip,
+        "chrA\t1\t>.\t.\t.\tr1\t60\t+\tsource=foo;ctype=trim;idx=0;elen=250,0,250;eseq=AAAA\textra\n",
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_badclip"))
+        .args(["fltbnd", "-s", "novel", &clip, &paf])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "chrA\t1\t>.\t.\t.\tr1\t60\t+\tsource=novel;ctype=trim;idx=0;elen=250,0,250;eseq=AAAA\textra\n"
+    );
+}
+
+#[test]
+fn stdin_given_once() {
+    // Two inputs can't both be stdin (`extract --alt - -` used to hang).
+    for args in [
+        &["fltbnd", "-", "-"][..],
+        &["fltreg", "-", "-"],
+        &["extract", "--alt", "-", "-"],
+    ] {
+        let out = Command::new(env!("CARGO_BIN_EXE_badclip"))
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(!out.status.success(), "{args:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("only one input can be `-`"), "{args:?}: {err}");
+    }
 }

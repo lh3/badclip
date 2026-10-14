@@ -32,6 +32,7 @@
 //! equivalent placements, and adds `inslen` plus a second eseq window
 //! (`elen2`/`equal2`/`eseq2`) for its second breakpoint on the read.
 
+use std::cmp::Ordering;
 use std::io::{self, BufRead, Write};
 
 use crate::io::open_reader;
@@ -55,13 +56,14 @@ pub struct ExtractOpts {
     pub trim: bool,
     /// Minimum CIGAR indel length for a del/ins breakend (`<= 0` disables).
     pub min_gap: i64,
-    /// Drop hits with mapq below this value (0 = keep everything).
+    /// Drop output lines whose col-7 mapq is below this (post-filter; 0 = keep
+    /// everything).
     pub min_mapq: i64,
     /// Drop hits whose alignment block length is below this (0 = keep all).
     pub min_aln_len: i64,
-    /// Flanking read sequence extracted on each side of a breakend (BAM only).
+    /// Flanking read sequence extracted on each side of a breakend (not for PAF).
     pub flank: i64,
-    /// Maximum extracted sequence length; longer windows omit `eseq` (BAM only).
+    /// Maximum extracted sequence length; longer windows omit `eseq` (not for PAF).
     pub max_eseq: i64,
     /// Drop breakends whose eseq quality (`equal`) is below this (0 = keep all).
     pub min_equal: i64,
@@ -558,8 +560,18 @@ fn emit_split(
     // orientation markers invert and the record's strand column becomes '-';
     // the alignment lengths, per-side mapqs, and the qlen left/right swap too so
     // they follow the output order (index 0 tracks ctg1:pos1, index 1 ctg2:pos2).
+    // On a tie (both ends at one offset) flip iff the first arrow is '<', so the
+    // two strands of one junction agree: a '+' read's `>>` stays `>>`/'+', a '-'
+    // read's `<<` becomes `>>`/'-' (flipping on every tie would give `<<` for
+    // '+' reads and `>>` for '-' reads, which never cluster).
     let mut strand = '+';
-    if !(ctg0 < ctg1 || (ctg0 == ctg1 && pos0 < pos1)) {
+    let swap = match (ctg0.cmp(ctg1), pos0.cmp(&pos1)) {
+        (Ordering::Less, _) => false,
+        (Ordering::Greater, _) => true,
+        (Ordering::Equal, Ordering::Equal) => o0 == '<',
+        (Ordering::Equal, ord) => ord == Ordering::Greater,
+    };
+    if swap {
         let (no0, no1) = (flip(o1), flip(o0));
         std::mem::swap(&mut ctg0, &mut ctg1);
         std::mem::swap(&mut pos0, &mut pos1);

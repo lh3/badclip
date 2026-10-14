@@ -11,7 +11,10 @@
 //!
 //! The PAF's query names are `getfa`'s names (`readName_idx_leftFlank_
 //! rightFlank_code`) in the same order as the eseq windows, and a subset of
-//! them, so both files are streamed with a one-line lookahead over the PAF.
+//! them, so both files are streamed with a one-line lookahead over the PAF. A
+//! PAF line left unconsumed at the end means the PAF was not made from this
+//! input (in this order) and is an error, since later breakends would otherwise
+//! pass as novel.
 //!
 //! With `-s STR` (`source: Some`), the mode flips: every input line is printed,
 //! and the survivors (kept/novel breakends) get their `source=` INFO tag
@@ -20,12 +23,13 @@
 //!
 //! `-Q` (default 20) additionally drops any line whose `equal` quality (the
 //! lower of `equal`/`equal2`) is below the threshold, in both modes (lines
-//! without an `equal` tag are kept).
+//! without an `equal` tag are kept). A record without a known `ctype` is an
+//! error.
 
 use std::io::{self, BufRead, Write};
 
 use crate::getfa::parse_windows;
-use crate::io::open_reader;
+use crate::io::{line_error, open_reader};
 
 /// Filter `extract_out` using the ropebwt3 PAF `rb3_paf`; `l` is the margin.
 ///
@@ -47,9 +51,10 @@ pub fn run(
     // One-line lookahead into the PAF stream.
     let mut ahead: Option<String> = None;
 
-    for line in clip.lines() {
+    for (lineno, line) in clip.lines().enumerate() {
         let line = line?;
-        let junctions = protected_intervals(&line, l);
+        let junctions =
+            protected_intervals(&line, l).map_err(|e| line_error(extract_out, lineno + 1, e))?;
         let Some((junctions, equal)) = junctions.filter(|(j, _)| !j.is_empty()) else {
             // No eseq tag -> dropped. In print-all mode it is still emitted
             // verbatim; it has no PAF entry, so the stream stays in sync.
@@ -66,10 +71,7 @@ pub fn run(
         for (name, lo, hi) in &junctions {
             loop {
                 if ahead.is_none() {
-                    ahead = match paf.next() {
-                        Some(p) => Some(p?),
-                        None => None,
-                    };
+                    ahead = next_paf(&mut paf)?;
                 }
                 let matches = ahead
                     .as_deref()
@@ -106,18 +108,47 @@ pub fn run(
             None => {}
         }
     }
+    // Any PAF line left over matched no window in order: the PAF does not come
+    // from `getfa` on this input, and the breakends after the stall were all
+    // judged novel.
+    if ahead.is_none() {
+        ahead = next_paf(&mut paf)?;
+    }
+    if let Some(p) = ahead {
+        let qn = p.split('\t').next().unwrap_or("");
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "{rb3_paf}: PAF query `{qn}` matches no eseq window of {extract_out} in order; \
+                 the PAF must come from `getfa` on the same input"
+            ),
+        ));
+    }
+    out.flush()?;
     Ok(())
 }
 
-/// Rewrite the `source=` value in a record's INFO (last TAB field) to `src`.
-/// If no `source=` tag is present, prepend one (extract's "source first"
-/// convention). Only this one tag's value changes; tag order is not significant.
+/// The next non-empty PAF line, if any.
+fn next_paf(paf: &mut impl Iterator<Item = io::Result<String>>) -> io::Result<Option<String>> {
+    for p in paf {
+        let p = p?;
+        if !p.is_empty() {
+            return Ok(Some(p));
+        }
+    }
+    Ok(None)
+}
+
+/// Rewrite the `source=` value in a record's INFO (column 9) to `src`. If no
+/// `source=` tag is present, prepend one (extract's "source first" convention).
+/// Only this one tag's value changes; tag order is not significant.
 fn relabel_source(line: &str, src: &str) -> String {
-    let Some((rest, info)) = line.rsplit_once('\t') else {
+    let mut f: Vec<&str> = line.split('\t').collect();
+    if f.len() < 9 {
         return line.to_string();
-    };
+    }
     let mut found = false;
-    let mut tags: Vec<String> = info
+    let mut tags: Vec<String> = f[8]
         .split(';')
         .map(|kv| {
             if kv.starts_with("source=") {
@@ -131,21 +162,28 @@ fn relabel_source(line: &str, src: &str) -> String {
     if !found {
         tags.insert(0, format!("source={src}"));
     }
-    format!("{rest}\t{}", tags.join(";"))
+    let info = tags.join(";");
+    f[8] = &info;
+    f.join("\t")
 }
 
 /// A protected junction interval `(fastaName, lo, hi)` on one eseq window.
 type Junction = (String, i64, i64);
+/// A line's junction intervals and its `equal` quality.
+type Junctions = (Vec<Junction>, Option<i64>);
 
 /// For an `extract` line, return the protected junction interval of each eseq
 /// window (named as by `getfa`; empty if none), and the
-/// line's `equal` quality (lowest over its windows). `None` for a line `getfa`
-/// cannot parse, treated like one without eseq.
+/// line's `equal` quality (lowest over its windows). `Ok(None)` for a line with
+/// fewer than 9 columns, treated like one without eseq; an error for a record
+/// without a known `ctype`.
 ///
 /// With `elen=e0,e1,e2`, the junction on the eseq is `[e0, e0+|e1|]`, extended
 /// by `l` on each side and clamped to the eseq.
-fn protected_intervals(line: &str, l: i64) -> Option<(Vec<Junction>, Option<i64>)> {
-    let w = parse_windows(line)?;
+fn protected_intervals(line: &str, l: i64) -> Result<Option<Junctions>, String> {
+    let Some(w) = parse_windows(line)? else {
+        return Ok(None);
+    };
     let junctions = w
         .windows
         .into_iter()
@@ -157,7 +195,7 @@ fn protected_intervals(line: &str, l: i64) -> Option<(Vec<Junction>, Option<i64>
             (win.name, lo, hi)
         })
         .collect();
-    Some((junctions, w.equal))
+    Ok(Some((junctions, w.equal)))
 }
 
 /// Parse a PAF line's 0-based query interval `(qs, qe)` (columns 3 and 4).

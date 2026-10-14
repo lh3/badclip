@@ -3,8 +3,8 @@
 //!
 //! This is a simplified reimplementation of `gc_cmd_merge` in `test/minisv.js`.
 //! badclip only has the breakend type — no INS/DEL/DUP/INV typing, no
-//! `SVTYPE`/`SVLEN`, no per-sample `source`, and no centromere or RT (TSD/polyA)
-//! annotation — so minisv's SVTYPE/SVLEN clustering constraints, the `-d` allele
+//! `SVTYPE`/`SVLEN`, and no centromere or RT (TSD/polyA) annotation — so
+//! minisv's SVTYPE/SVLEN clustering constraints, the `-d` allele
 //! length filter, the centromere filter (`-e`), and the whole RT branch
 //! (`-r`/`-R`) are dropped.
 //!
@@ -27,7 +27,8 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{self, BufRead, Write};
 
 use crate::iitree::IITree;
-use crate::io::open_reader;
+use crate::io::{line_error, open_reader};
+use crate::record::Ctype;
 
 /// Options for `merge`, mirroring minisv's `-c -s -w -A` (plus `-M` for the
 /// per-cluster compare cap and the badclip-specific `-m`/`-C`/`-S` filters).
@@ -61,40 +62,6 @@ pub struct MergeOpts {
     pub min_cnt_strand_in: i64,
 }
 
-/// The breakend type of an `extract` record (its `ctype=` tag).
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Ctype {
-    Trim,
-    Split,
-    Del,
-    Ins,
-}
-
-impl Ctype {
-    /// Parse a `ctype=` value. A missing (pre-0.2 output) or unknown value is
-    /// inferred as `getfa` does: a trim if the record has no mate (`ctg2` is
-    /// `.`), else a split.
-    fn parse(v: Option<&str>, ctg2: &str) -> Ctype {
-        match v {
-            Some("trim") => Ctype::Trim,
-            Some("split") => Ctype::Split,
-            Some("del") => Ctype::Del,
-            Some("ins") => Ctype::Ins,
-            _ if ctg2 == "." => Ctype::Trim,
-            _ => Ctype::Split,
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Ctype::Trim => "trim",
-            Ctype::Split => "split",
-            Ctype::Del => "del",
-            Ctype::Ins => "ins",
-        }
-    }
-}
-
 /// One parsed `extract` breakend record. Only fields needed for
 /// clustering/emission are kept (the col-8 INFO is not — merge INFO is derived
 /// from scratch).
@@ -113,7 +80,7 @@ struct Rec {
     strand: u8,     // col 7, b'+' or b'-'
     name: String,   // col 5, qname
     source: String, // `source=` INFO tag (col 8); "." if absent
-    ctype: Ctype,   // `ctype=` INFO tag (inferred if absent)
+    ctype: Ctype,   // `ctype=` INFO tag (required)
     inslen: i64,    // `inslen=` INFO tag of an `ins` record; 0 otherwise
     // Read counts carried by a `-m` (sample-merge) input line: `fwd`/`rev` summed
     // over the `count=` tag's sources, `fr`/`rf` from `count_fr=`/`count_rf=`. All
@@ -135,17 +102,41 @@ struct Cluster {
     members: Vec<Rec>,
 }
 
-/// Parse one `extract` line into a `Rec`; `None` for malformed lines (`< 9`
+/// Parse one `extract` line into a `Rec`; `Ok(None)` for malformed lines (`< 9`
 /// fields), lines whose col-7 mapq is below `min_mapq`, lines whose `equal`
 /// quality (the lower of `equal`/`equal2`) is below `min_equal` (lines lacking
 /// an `equal` tag are kept), or
 /// **join** lines whose smaller per-hit mapq (from the `mapq=` INFO tag) is below
-/// `min_mapq_min` (clips are exempt), consistent with the other subcommands.
-fn parse_rec(line: &str, min_equal: i64, min_mapq: i64, min_mapq_min: i64) -> Option<Rec> {
+/// `min_mapq_min` (clips are exempt), consistent with the other subcommands. A
+/// record without a known `ctype` is an error, whether or not it is filtered.
+fn parse_rec(
+    line: &str,
+    min_equal: i64,
+    min_mapq: i64,
+    min_mapq_min: i64,
+) -> Result<Option<Rec>, String> {
     let f: Vec<&str> = line.split('\t').collect();
     if f.len() < 9 {
-        return None;
+        return Ok(None);
     }
+    let ctype = Ctype::from_info(f[8])?;
+    Ok(parse_rec_fields(
+        &f,
+        ctype,
+        min_equal,
+        min_mapq,
+        min_mapq_min,
+    ))
+}
+
+/// The filters and fields of [`parse_rec`], once `ctype` is known.
+fn parse_rec_fields(
+    f: &[&str],
+    ctype: Ctype,
+    min_equal: i64,
+    min_mapq: i64,
+    min_mapq_min: i64,
+) -> Option<Rec> {
     let ob = f[2].as_bytes();
     if ob.len() < 2 {
         return None;
@@ -189,10 +180,6 @@ fn parse_rec(line: &str, min_equal: i64, min_mapq: i64, min_mapq_min: i64) -> Op
     {
         return None;
     }
-    let ctype = Ctype::parse(
-        f[8].split(';').find_map(|kv| kv.strip_prefix("ctype=")),
-        f[3],
-    );
     Some(Rec {
         ctg: f[0].to_string(),
         pos: f[1].parse().ok()?,
@@ -316,8 +303,13 @@ fn parse_rec_merge(line: &str, opts: &MergeOpts) -> Option<Rec> {
         mapq2,
         strand: f[7].bytes().next()?,
         source: ".".to_string(),
-        // Not used in -m mode (write_sv_merge emits no per-ctype tags).
-        ctype: Ctype::parse(None, f[3]),
+        // `merge` output has no ctype; not used in -m mode (write_sv_merge emits
+        // no per-ctype tags).
+        ctype: if f[3] == "." {
+            Ctype::Trim
+        } else {
+            Ctype::Split
+        },
         inslen: 0,
         fwd,
         rev,
@@ -624,13 +616,14 @@ pub fn run(opts: &MergeOpts) -> io::Result<()> {
     // deterministic.
     let mut recs: Vec<Rec> = Vec::new();
     for input in &opts.inputs {
-        for line in open_reader(input)?.lines() {
+        for (lineno, line) in open_reader(input)?.lines().enumerate() {
             let line = line?;
             // `-m`: input is combined `merge` output; otherwise `extract` output.
             let rec = if opts.merge_input {
                 parse_rec_merge(&line, opts)
             } else {
                 parse_rec(&line, opts.min_equal, opts.min_mapq, opts.min_mapq_min)
+                    .map_err(|e| line_error(input, lineno + 1, e))?
             };
             if let Some(r) = rec {
                 recs.push(r);
@@ -695,5 +688,6 @@ pub fn run(opts: &MergeOpts) -> io::Result<()> {
     while let Some(cl) = active.pop_front() {
         write_sv(&mut out, &cl, opts, ins.as_ref())?;
     }
+    out.flush()?;
     Ok(())
 }

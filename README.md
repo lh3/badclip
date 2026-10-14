@@ -23,10 +23,14 @@ It has six subcommands, forming a pipeline:
 | [`fltreg`](#fltreg) | Drop breakends that fall in BED regions. |
 | [`fltcnt`](#fltcnt) | Keep `merge` calls with enough raw/filtered read support. |
 
-Every subcommand reads its input from a file or from stdin via `-`, transparently
-decompresses gzip'd input, and prints its own `--help` (instead of waiting on
-stdin) when run with no input. `getfa` and `fltbnd` were called `geteseq` and
-`flteseq` before v0.2.0; the old names still work as hidden aliases.
+Every subcommand reads its input from a file or from stdin via `-` (at most one
+input per run can be `-`), transparently decompresses gzip'd input, and prints
+its own `--help` (instead of waiting on stdin) when run with no input. Length
+options (`extract -c/-g/-a/-f/-e`, `fltbnd -l`, `merge -w`, `fltreg -l`,
+`fltcnt -l`) accept a `k`/`m`/`g` suffix, e.g. `-w 1k`. `getfa`, `fltbnd` and
+`merge` require the `ctype` tag that `extract` writes since v0.2.0; older output
+is an error. `getfa` and `fltbnd` were called `geteseq` and `flteseq` before
+v0.2.0; the old names still work as hidden aliases.
 
 ## Install
 
@@ -55,14 +59,14 @@ Options:
 |--------|---------|-------------|
 | `--paf` | off | Read PAF (optionally gzip'd) instead of an alignment file. |
 | `-r`, `--reference <FASTA>` | — | Reference FASTA (faidx-indexed), **required for CRAM**; ignored for BAM/SAM/PAF. |
-| `--alt <FILE>` | — | File of ALT contig names (alignment-file input): `@` header lines are ignored, the first tab-delimited column of the rest is the contig name (a plain list or a bwa-kit `.alt` SAM both work). Reads whose primary maps to an ALT contig are skipped, and ALT hits are dropped before breakends are formed. |
+| `--alt <FILE>` | — | File of ALT contig names (alignment-file input; gzip ok, `-` for stdin unless `INPUT` is): `@` header lines are ignored, the first tab-delimited column of the rest is the contig name (a plain list or a bwa-kit `.alt` SAM both work). Reads whose primary maps to an ALT contig are skipped, and ALT hits are dropped before breakends are formed. |
 | `-s`, `--source <STR>` | `foo` | Dataset name, stamped on every record as a `source=` INFO tag. |
 | `-T`, `--trim` | off | Also report **trim** breakends (read ends clipped away from every alignment). |
-| `-c`, `--min-clip <INT>` | `50` | Minimum clip length to report a trim breakend. |
-| `-g`, `--min-gap <NUM>` | `1000` | Minimum CIGAR deletion/insertion length to report a del/ins breakend (`k`/`m`/`g` suffix ok); `0` disables. |
-| `-a`, `--min-aln-len <INT>` | `0` | Drop hits whose alignment block length (PAF col 11) is below this value (upfront hit filter). |
-| `-f`, `--flank <INT>` | `250` | Flanking read sequence extracted on each side of a breakend (alignment-file input only). |
-| `-e`, `--max-eseq <INT>` | `1000` | Maximum extracted window; longer windows omit `eseq` (alignment-file input only). |
+| `-c`, `--min-clip <NUM>` | `50` | Report a trim breakend only when the clip is **longer** than this. |
+| `-g`, `--min-gap <NUM>` | `1000` | Minimum CIGAR deletion/insertion length to report a del/ins breakend; `0` disables. |
+| `-a`, `--min-aln-len <NUM>` | `0` | Drop hits whose alignment block length (PAF col 11) is below this value (upfront hit filter). |
+| `-f`, `--flank <NUM>` | `250` | Flanking read sequence extracted on each side of a breakend (alignment-file input only). |
+| `-e`, `--max-eseq <NUM>` | `1000` | Maximum extracted window; longer windows omit `eseq` (alignment-file input only). |
 | `-Q`, `--min-equal <INT>` | `0` | **Post-filter:** drop breakends whose eseq quality (`equal`; for an insertion the lower of `equal`/`equal2`) is below this, to shrink downstream input. `0` keeps all; breakends without an `equal` value are always kept. |
 | `-q`, `--min-mapq <INT>` | `0` | **Post-filter:** drop output lines whose col-7 mapq (the split's larger, or the one hit's mapq for trim/del/ins) is below this. Does not drop alignments upfront. |
 
@@ -172,16 +176,18 @@ orientation (not flipped with the output):
 - **Trim** (`-T`) — one side is a real breakend, the other is nothing (`.`):
 
   ```
-  chr1   123569841   >.   .   .   read/ccs   1   -   source=foo;ctype=trim;idx=0;aln_len=14732,0;qlen=14925,0,141;mapq=1,0
-  chr1   123555134   <.   .   .   read/ccs   1   -   source=foo;ctype=trim;idx=1;aln_len=14732,0;qlen=14774,0,292;mapq=1,0
+  chr1   123569841   >.   .   .   read/ccs   1   -   source=foo;ctype=trim;idx=0;n_aln=1;aln_len=14732,0;qlen=14925,0,141;mapq=1,0
+  chr1   123555134   <.   .   .   read/ccs   1   -   source=foo;ctype=trim;idx=1;n_aln=1;aln_len=14732,0;qlen=14774,0,292;mapq=1,0
   ```
 
 - **Split** — two mapped ends meet. The smaller `(contig, position)` is written
-  first; the two arrows show how the sides are oriented:
+  first (when both ends share one position, the line is flipped only if its
+  first arrow is `<`, so reads from both strands of a junction agree); the two
+  arrows show how the sides are oriented:
 
   ```
-  chr1    57375269   >>   chr21   32069271   read/ccs   60   -   source=foo;ctype=split;idx=0;aln_len=16879,26284;qlen=16808,1,26163;mapq=60,60
-  chr13   51911798   <>   chr2    76026062   read/ccs   60   +   source=foo;ctype=split;idx=0;aln_len=29505,5668;qlen=29436,1,5661;mapq=60,60
+  chr1    57375269   >>   chr21   32069271   read/ccs   60   -   source=foo;ctype=split;idx=0;n_aln=2;aln_len=16879,26284;qlen=16808,1,26163;mapq=60,60
+  chr13   51911798   <>   chr2    76026062   read/ccs   60   +   source=foo;ctype=split;idx=0;n_aln=2;aln_len=29505,5668;qlen=29436,1,5661;mapq=60,60
   ```
 
   `chr1:57375269 >> chr21:32069271` means the **right** side of `chr1:57375269`
@@ -219,7 +225,7 @@ Convert `extract` output into a FASTA of the extracted breakend sequences
 badclip getfa [OPTIONS] [INPUT]
 ```
 
-- `INPUT` — `extract` output (gzip ok; `-` or omit for stdin).
+- `INPUT` — `extract` output (gzip ok; `-` for stdin).
 
 Options:
 
@@ -232,8 +238,8 @@ For each eseq window of a record, it writes one FASTA entry named
 the window's bases; records without an eseq are skipped. `code` is the breakend
 type: `T` (trim), `S` (split), `D` (del), or, for an insertion's two windows,
 `L` (`eseq`, the first breakpoint along the read) and `R` (`eseq2`, the
-second). Records without a `ctype` tag (pre-0.2 output) count as a trim when
-they have no mate (column 4 = `.`), else as a split.
+second). A record without a `ctype` tag (pre-0.2 output) or with an unknown one
+is an error.
 
 ```sh
 badclip extract aln.bam | badclip getfa - > eseq.fa   # "-" = stdin
@@ -258,14 +264,15 @@ badclip fltbnd [OPTIONS] <extractOut> <ropebwt3.paf>
 ```
 
 - `<extractOut>` — `extract` output (gzip ok; `-` for stdin).
-- `<ropebwt3.paf>` — the `ropebwt3 sw` PAF of the `getfa` FASTA (gzip ok).
+- `<ropebwt3.paf>` — the `ropebwt3 sw` PAF of the `getfa` FASTA (gzip ok; `-`
+  for stdin if `<extractOut>` is not).
 
 Options:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `-l`, `--margin <INT>` | `50` | Margin extending the protected junction interval on each side. |
-| `-s`, `--source <STR>` | off | Print **all** input lines and rewrite the `source=` tag to `STR` on survivors (kept/novel breakends). |
+| `-l`, `--margin <NUM>` | `50` | Margin extending the protected junction interval on each side. |
+| `-s`, `--source <STR>` | off | Print all input lines (except those dropped by `-Q`) and rewrite the `source=` tag to `STR` on survivors (kept/novel breakends). |
 | `-Q`, `--min-equal <INT>` | `20` | Drop lines whose eseq quality (`equal` tag; for an insertion the lower of `equal`/`equal2`) is below this (both modes). Lines without an `equal` tag are kept. |
 
 A record is **dropped** if it has no `eseq` tag, or if some ropebwt3 alignment's
@@ -275,14 +282,18 @@ spans the breakend, with `-l` margin on each side — the breakend is
 "protected"). An insertion has two windows (`_L`, `_R`) and is dropped if
 **either** junction is spanned. Surviving `extract` lines are printed verbatim.
 
-With `-s STR`, the output instead contains **every** input line, with the
-survivors' `source=` tag rewritten to `STR` (dropped lines keep their original
-`source`). This marks novel breakends distinctly so a downstream `merge` can tell
+With `-s STR`, the output instead contains every input line except those
+dropped by `-Q`, with the survivors' `source=` tag (in INFO, column 9) rewritten
+to `STR` (dropped lines keep their original `source`). This marks novel breakends distinctly so a downstream `merge` can tell
 them from pangenome-explained ones.
 
 The PAF's query names must be the `getfa` names, and in the same order as the
 FASTA records (as produced by the pipeline), so the two files are streamed
-without loading into memory.
+without loading into memory. The PAF must come from `getfa` on this same input:
+a PAF line that matches no eseq window in order (e.g. the input was filtered
+after `getfa`, or the PAF was reordered) is an error. Use the same `-Q` for
+`getfa` and `fltbnd`: a window `getfa` dropped has no PAF lines, so a lower
+`fltbnd -Q` would let it through as novel.
 
 ```sh
 badclip extract aln.bam > clip.txt
@@ -310,11 +321,11 @@ Options:
 |--------|---------|-------------|
 | `-c`, `--min-cnt <INT>` | `2` | Minimum supporting-read count to emit a call. |
 | `-s`, `--min-cnt-strand <INT>` | `0` | Minimum read count on each strand. |
-| `-w`, `--win-size <INT>` | `100` | Clustering window (bp). |
+| `-w`, `--win-size <NUM>` | `100` | Clustering window (bp). |
 | `-A`, `--max-allele <INT>` | `100` | Cap on simultaneously-open clusters. |
 | `-M`, `--max-check <INT>` | `500` | Maximum reads compared per cluster. |
 | `-Q`, `--min-equal <INT>` | `20` | Drop input breakends whose eseq quality (`equal` tag; for an insertion the lower of `equal`/`equal2`) is below this before clustering. Breakends without an `equal` tag are kept. |
-| `-q`, `--min-mapq <INT>` | `0` | Drop input breakends whose col-7 mapq (the split's larger, or a trim's mapq) is below this. |
+| `-q`, `--min-mapq <INT>` | `0` | Drop input breakends whose col-7 mapq (the split's larger, or a trim's mapq; with `-m`, the larger of `avg_mapq`) is below this. |
 | `-p`, `--min-mapq-min <INT>` | `10` | Drop input breakends with a mate (splits, del/ins) whose *smaller* per-hit mapq (the `min` of the `mapq=` pair) is below this; trims are exempt. |
 | `-m`, `--merge-input` | off | Sample-merge mode: treat input as combined `merge` output (see below). |
 | `-C`, `--min-cnt-in <INT>` | `3` | (`-m` only) drop input lines whose total count is below this. |
@@ -344,8 +355,7 @@ ctg1   pos1   ori   ctg2   pos2   .   count   strand   avg_mapq=q1,q2;count=..;c
 - `ctype_count=type:n|…` — the reads per breakend type (`del`, `ins`, `split`,
   `trim`), alphabetical, listing only types present, e.g. `del:10|split:5` for a
   deletion seen both in CIGARs and as split reads. Sums to column 7. Input
-  without a `ctype` tag (pre-0.2) counts as `trim` when it has no mate, else
-  `split`.
+  without a `ctype` tag (pre-0.2) or with an unknown one is an error.
 - `avg_inslen`, `diff_inslen` — for a call with `ins` reads: their mean
   `inslen` (rounded) and `max - min`.
 - `count_fr`, `count_rf` — reads oriented `><` and `<>`; present only when the
@@ -376,8 +386,8 @@ With `-m`, `merge` re-runs the same clustering on the (filtered) combination of
 several samples' `merge` outputs — a second-level, population merge. Only the
 INFO parsing and emission change; the clustering is identical. mapq is read from
 `avg_mapq=q1,q2` and per-strand read counts from the `count=` tag (summed over
-sources); the `-c`/`-s` cluster filters and `-q`/`-p` stay read-based (`-Q` is a
-no-op — merge output has no `equal` tag). The per-line `-C`/`-S` filters drop
+sources); the `-c`/`-s` cluster filters count reads, and `-q`/`-p` test the
+larger/smaller of `avg_mapq` (`-Q` is a no-op — merge output has no `equal` tag). The per-line `-C`/`-S` filters drop
 under-supported input lines before clustering.
 
 Output stays in the 9-column shape but with **column 7 = the number of distinct
@@ -401,9 +411,10 @@ centromeres, low-complexity regions).
 badclip fltreg [-l INT] [INPUT] [BED]
 ```
 
-- `INPUT` — `extract` or `merge` output (gzip ok; `-` or omit for stdin).
-- `BED` — BED file of regions to filter against (gzip ok).
-- `-l INT` — pad each BED interval to `[start-l, end+l)` before testing
+- `INPUT` — `extract` or `merge` output (gzip ok; `-` for stdin).
+- `BED` — BED file of regions to filter against (gzip ok; `-` for stdin if
+  `INPUT` is not).
+- `-l NUM` — pad each BED interval to `[start-l, end+l)` before testing
   (default 0, i.e. the raw intervals).
 
 Both output formats share the 9-column layout, so one filter serves both. A line
@@ -420,7 +431,7 @@ lookup is a single binary search (no new dependency; overlapping BED input is
 handled).
 
 ```sh
-badclip merge - < sv.txt | badclip fltreg - blacklist.bed.gz > sv.filtered.txt
+badclip merge clip.txt | badclip fltreg - blacklist.bed.gz > sv.filtered.txt
 ```
 
 ## `fltcnt`
@@ -432,7 +443,7 @@ the `fltbnd`-filtered (`*.flt`) ones.
 badclip fltcnt [OPTIONS] [INPUT]
 ```
 
-- `INPUT` — `merge` output (gzip ok; `-` or omit for stdin).
+- `INPUT` — `merge` output (gzip ok; `-` for stdin).
 - `-c INT` — minimum reads from the `--src` sources (default 3).
 - `-s INT` — minimum `--src` reads on each strand (default 0).
 - `-r INT` — maximum reads from the `--rest` sources (default 0, i.e. every

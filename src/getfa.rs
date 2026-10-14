@@ -9,11 +9,13 @@
 //! (`eseq`, its first breakpoint along the read) and `R` (`eseq2`, the second).
 //! Records without an eseq are skipped, as are records whose `equal` quality
 //! (the lower of `equal`/`equal2`) is below `-Q` (records lacking `equal` are
-//! kept). The parsing here is shared with `fltbnd`, so names always agree.
+//! kept). A record without a known `ctype` is an error. The parsing here is
+//! shared with `fltbnd`, so names always agree.
 
 use std::io::{self, BufRead, Write};
 
-use crate::io::open_reader;
+use crate::io::{line_error, open_reader};
+use crate::record::Ctype;
 
 /// One eseq window of an `extract` record.
 pub(crate) struct Window<'a> {
@@ -32,17 +34,22 @@ pub(crate) struct Windows<'a> {
     pub equal: Option<i64>,
 }
 
-/// Parse the eseq windows of one `extract` record. `None` for a malformed line
-/// or an unknown `ctype`. A record without `ctype` (pre-0.2 output) is a trim if
-/// it has no mate (`ctg2` is `.`), else a split.
-pub(crate) fn parse_windows(line: &str) -> Option<Windows<'_>> {
+/// Parse the eseq windows of one `extract` record. `Ok(None)` for a line with
+/// fewer than 9 columns; an error if the record has no `ctype` (pre-0.2 output)
+/// or an unknown one.
+pub(crate) fn parse_windows(line: &str) -> Result<Option<Windows<'_>>, String> {
     let fields: Vec<&str> = line.split('\t').collect();
     if fields.len() < 9 {
-        return None;
+        return Ok(None);
     }
     let qname = fields[5];
+    let codes = match Ctype::from_info(fields[8])? {
+        Ctype::Trim => ["T", ""],
+        Ctype::Split => ["S", ""],
+        Ctype::Del => ["D", ""],
+        Ctype::Ins => ["L", "R"],
+    };
 
-    let mut ctype = None;
     let mut idx = None;
     // Index 0: elen/eseq; index 1: elen2/eseq2 (an insertion's second window).
     let mut elen = [None, None];
@@ -53,7 +60,6 @@ pub(crate) fn parse_windows(line: &str) -> Option<Windows<'_>> {
             continue;
         };
         match k {
-            "ctype" => ctype = Some(v),
             "idx" => idx = Some(v),
             "elen" => elen[0] = Some(v),
             "elen2" => elen[1] = Some(v),
@@ -67,16 +73,6 @@ pub(crate) fn parse_windows(line: &str) -> Option<Windows<'_>> {
             _ => {}
         }
     }
-    let codes = match ctype {
-        Some("trim") => ["T", ""],
-        Some("split") => ["S", ""],
-        Some("del") => ["D", ""],
-        Some("ins") => ["L", "R"],
-        Some(_) => return None,
-        None if fields[3] == "." => ["T", ""],
-        None => ["S", ""],
-    };
-
     let mut windows = Vec::new();
     for i in 0..2 {
         let (Some(elen), Some(eseq)) = (elen[i], eseq[i]) else {
@@ -90,13 +86,16 @@ pub(crate) fn parse_windows(line: &str) -> Option<Windows<'_>> {
             continue;
         }
         let elen = [e[0], e[1], e[2]];
+        let Some(idx) = idx else {
+            return Ok(None);
+        };
         windows.push(Window {
-            name: format!("{qname}_{}_{}_{}_{}", idx?, elen[0], elen[2], codes[i]),
+            name: format!("{qname}_{idx}_{}_{}_{}", elen[0], elen[2], codes[i]),
             elen,
             eseq,
         });
     }
-    Some(Windows { windows, equal })
+    Ok(Some(Windows { windows, equal }))
 }
 
 /// Read `extract` output from `input` (`"-"` = stdin) and emit FASTA. Records
@@ -105,9 +104,9 @@ pub fn run(input: &str, min_equal: i64) -> io::Result<()> {
     let reader = open_reader(input)?;
     let stdout = io::stdout();
     let mut out = io::BufWriter::new(stdout.lock());
-    for line in reader.lines() {
+    for (lineno, line) in reader.lines().enumerate() {
         let line = line?;
-        let Some(w) = parse_windows(&line) else {
+        let Some(w) = parse_windows(&line).map_err(|e| line_error(input, lineno + 1, e))? else {
             continue;
         };
         // Drop records with a low eseq quality; keep those lacking an `equal` tag.
@@ -119,5 +118,6 @@ pub fn run(input: &str, min_equal: i64) -> io::Result<()> {
             writeln!(out, "{}", win.eseq)?;
         }
     }
+    out.flush()?;
     Ok(())
 }

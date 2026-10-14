@@ -12,6 +12,7 @@ mod iitree;
 mod io;
 mod merge;
 mod paf;
+mod record;
 
 use std::process::ExitCode;
 
@@ -30,12 +31,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Extract breakends from read alignments in BAM (or PAF) format.
+    /// Extract breakends from read alignments in SAM/BAM/CRAM (or PAF) format.
     Extract {
-        /// Input alignments: BAM by default, or PAF with --paf. Use "-" for stdin.
+        /// Input alignments: SAM/BAM/CRAM (autodetected) by default, or PAF with
+        /// --paf. Use "-" for stdin.
         input: Option<String>,
 
-        /// Read PAF (optionally gzip'd) instead of BAM.
+        /// Read PAF (optionally gzip'd) instead of SAM/BAM/CRAM.
         #[arg(long)]
         paf: bool,
 
@@ -51,8 +53,9 @@ enum Command {
         #[arg(short = 's', long = "source", default_value_t = String::from("foo"))]
         source: String,
 
-        /// Minimum clip length to report a trim breakend.
-        #[arg(short = 'c', long = "min-clip", default_value_t = 50)]
+        /// Report a trim breakend only when the clip is longer than this (k/m/g
+        /// suffix ok).
+        #[arg(short = 'c', long = "min-clip", default_value_t = 50, value_parser = parse_num)]
         min_clip: i64,
 
         /// Also report trim breakends (read ends clipped away from every
@@ -60,20 +63,24 @@ enum Command {
         #[arg(short = 'T', long = "trim")]
         trim: bool,
 
-        /// Minimum CIGAR indel length to report a del/ins breakend (0 disables).
+        /// Minimum CIGAR indel length to report a del/ins breakend (0 disables;
+        /// k/m/g suffix ok).
         #[arg(short = 'g', long = "min-gap", default_value_t = 1000, value_parser = parse_num)]
         min_gap: i64,
 
-        /// Drop hits whose alignment block length (PAF col 11) is below this.
-        #[arg(short = 'a', long = "min-aln-len", default_value_t = 0)]
+        /// Drop hits whose alignment block length (PAF col 11) is below this
+        /// (k/m/g suffix ok).
+        #[arg(short = 'a', long = "min-aln-len", default_value_t = 0, value_parser = parse_num)]
         min_aln_len: i64,
 
-        /// Flanking read sequence extracted on each side of a breakend (BAM only).
-        #[arg(short = 'f', long = "flank", default_value_t = 250)]
+        /// Flanking read sequence extracted on each side of a breakend (not for
+        /// PAF; k/m/g suffix ok).
+        #[arg(short = 'f', long = "flank", default_value_t = 250, value_parser = parse_num)]
         flank: i64,
 
-        /// Maximum extracted sequence length; longer windows omit eseq (BAM only).
-        #[arg(short = 'e', long = "max-eseq", default_value_t = 1000)]
+        /// Maximum extracted sequence length; longer windows omit eseq (not for
+        /// PAF; k/m/g suffix ok).
+        #[arg(short = 'e', long = "max-eseq", default_value_t = 1000, value_parser = parse_num)]
         max_eseq: i64,
 
         /// Drop breakends whose eseq quality (`equal`) is below this (0 = keep all).
@@ -92,18 +99,20 @@ enum Command {
         #[arg(short = 'Q', long = "min-equal", default_value_t = 20)]
         min_equal: i64,
 
-        /// Input `extract` output. Omit or use "-" to read from stdin.
+        /// `extract` output (gzip ok; "-" for stdin).
         input: Option<String>,
     },
 
     /// Filter `extract` breakends whose eseq is spanned by a pangenome alignment.
     #[command(alias = "flteseq")]
     Fltbnd {
-        /// Margin extending the protected junction interval on each side.
-        #[arg(short = 'l', long = "margin", default_value_t = 50)]
+        /// Margin extending the protected junction interval on each side (k/m/g
+        /// suffix ok).
+        #[arg(short = 'l', long = "margin", default_value_t = 50, value_parser = parse_num)]
         margin: i64,
 
-        /// Print all input lines, rewriting survivors' `source=` tag to this.
+        /// Print all input lines (except those dropped by -Q), rewriting
+        /// survivors' `source=` tag to this.
         #[arg(short = 's', long = "source")]
         source: Option<String>,
 
@@ -132,8 +141,8 @@ enum Command {
         #[arg(short = 's', long = "min-cnt-strand", default_value_t = 0)]
         min_cnt_strand: i64,
 
-        /// Clustering window size (bp).
-        #[arg(short = 'w', long = "win-size", default_value_t = 100)]
+        /// Clustering window size (bp; k/m/g suffix ok).
+        #[arg(short = 'w', long = "win-size", default_value_t = 100, value_parser = parse_num)]
         win_size: i64,
 
         /// Cap on active clusters (flush trigger).
@@ -148,7 +157,8 @@ enum Command {
         #[arg(short = 'Q', long = "min-equal", default_value_t = 20)]
         min_equal: i64,
 
-        /// Drop input breakends whose col-7 mapq is below this.
+        /// Drop input breakends whose col-7 mapq (with -m: the higher of
+        /// `avg_mapq`) is below this.
         #[arg(short = 'q', long = "min-mapq", default_value_t = 0)]
         min_mapq: i64,
 
@@ -179,8 +189,9 @@ enum Command {
         /// BED file of regions to filter against (gzip ok).
         bed: Option<String>,
 
-        /// Pad each BED interval to [st-l, en+l) before testing.
-        #[arg(short = 'l', long = "margin", default_value_t = 0)]
+        /// Pad each BED interval to [st-l, en+l) before testing (k/m/g suffix
+        /// ok).
+        #[arg(short = 'l', long = "margin", default_value_t = 0, value_parser = parse_num)]
         margin: i64,
     },
 
@@ -302,20 +313,23 @@ fn main() -> ExitCode {
             let Some(input) = input else {
                 return print_subcommand_help("extract");
             };
-            extract::run(&ExtractOpts {
-                input,
-                paf,
-                reference,
-                alt,
-                source,
-                min_clip,
-                trim,
-                min_gap,
-                min_mapq,
-                min_aln_len,
-                flank,
-                max_eseq,
-                min_equal,
+            // `--alt -` with stdin input would lock stdin twice and hang.
+            io::check_stdin(&[&input, alt.as_deref().unwrap_or("")]).and_then(|_| {
+                extract::run(&ExtractOpts {
+                    input,
+                    paf,
+                    reference,
+                    alt,
+                    source,
+                    min_clip,
+                    trim,
+                    min_gap,
+                    min_mapq,
+                    min_aln_len,
+                    flank,
+                    max_eseq,
+                    min_equal,
+                })
             })
         }
         Command::Getfa { min_equal, input } => {
@@ -334,7 +348,9 @@ fn main() -> ExitCode {
             let (Some(extract_out), Some(rb3_paf)) = (extract_out, rb3_paf) else {
                 return print_subcommand_help("fltbnd");
             };
-            fltbnd::run(&extract_out, &rb3_paf, margin, source.as_deref(), min_equal)
+            io::check_stdin(&[&extract_out, &rb3_paf]).and_then(|_| {
+                fltbnd::run(&extract_out, &rb3_paf, margin, source.as_deref(), min_equal)
+            })
         }
         Command::Merge {
             inputs,
@@ -372,7 +388,7 @@ fn main() -> ExitCode {
             let (Some(input), Some(bed)) = (input, bed) else {
                 return print_subcommand_help("fltreg");
             };
-            fltreg::run(&input, &bed, margin)
+            io::check_stdin(&[&input, &bed]).and_then(|_| fltreg::run(&input, &bed, margin))
         }
         Command::Fltcnt {
             input,
