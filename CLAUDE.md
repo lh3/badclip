@@ -22,7 +22,7 @@ cargo run -- extract --paf test/join02.paf   # PAF
 ## Layout
 
 - `src/main.rs`   — clap CLI, subcommand dispatch. New subcommands slot in here.
-- `src/io.rs`     — `open_reader`: stdin/file + transparent gzip (magic-byte peek), used by every text input (all but `extract`'s SAM/BAM/CRAM path); `check_stdin` (at most one input may be `-`: `fltbnd`, `fltreg`, `extract --alt`); `line_error` (`path:line: msg` errors).
+- `src/io.rs`     — `open_raw` (file, or `-` = locked stdin, claimed once per run: a second `-` is an error) under `open_reader` (+ transparent gzip, magic-byte peek; every text input) and `aln::run` (SAM/BAM/CRAM); `line_error`/`display_path` (`path:line: msg` errors, `-` shown as `stdin`).
 - `src/record.rs` — shared `extract`-record helpers: `Ctype` (`from_info` requires a known `ctype=`; used by `getfa`/`fltbnd`/`merge`).
 - `src/paf.rs`    — `Hit`/`Gap` structs, `Strand`, `parse_paf_line` (keeps `tp:A:P`/`I`; gaps from `cg:Z`), `parse_cigar`, `find_gaps` (long CIGAR indels + insertion normalization).
 - `src/aln.rs`    — SAM/BAM/CRAM input via noodles-util (format autodetected): build `Hit`s from a primary record + its `SA` tag; a supplementary record yields only its own gaps. CRAM needs `-r`.
@@ -33,14 +33,16 @@ cargo run -- extract --paf test/join02.paf   # PAF
 - `src/fltreg.rs` — `fltreg` subcommand: drop `extract`/`merge` breakends that fall in BED regions.
 - `src/fltcnt.rs` — `fltcnt` subcommand: keep `merge` calls by raw/filtered source read counts.
 - `tests/extract.rs`, `tests/merge.rs`, `tests/fltreg.rs`, `tests/fltcnt.rs` — end-to-end tests driving the compiled binary.
-
-Cross-subcommand conventions: every `run` ends with `out.flush()?` (a final
-write error — full disk, closed pipe — is reported, not lost in `BufWriter`'s
-drop); length options take a `k`/`m`/`g` suffix (`main.rs::parse_num`:
-`extract -c/-g/-a/-f/-e`, `fltbnd -l`, `merge -w`, `fltreg -l`, `fltcnt -l`);
-`getfa`/`fltbnd`/`merge` require `ctype` (absent — pre-0.2 output — or unknown
-is a `path:line:` error, even on a line a filter would drop).
 - `test/`         — `*.paf` inputs, `*.msv` (minisv) references, `bam01*`/`cram01*`/`gap01*`/`flt01*`/`merge01*` fixtures/goldens, `fltreg01.bed`, `minisv.js`.
+
+Cross-subcommand conventions: `main` owns the one `BufWriter` on stdout, passes
+it to each subcommand's `run(.., out)` and flushes it once at the end (a final
+write error — full disk, closed pipe — is reported, not lost in the writer's
+drop); at most one input per run can be `-` (`io::open_raw`); length options
+take a `k`/`m`/`g` suffix (`main.rs::parse_num`: `extract -c/-g/-a/-f/-e`,
+`fltbnd -l`, `merge -w`, `fltreg -l`, `fltcnt -l`); `getfa`/`fltbnd`/`merge`
+require `ctype` (absent — pre-0.2 output — or unknown is a `path:line:` error,
+even on a line a filter would drop).
 
 ## `getfa`
 
@@ -77,7 +79,7 @@ sync. At the end, a PAF line left unconsumed (blank lines skipped,
 filtered after `getfa`, PAF reordered), so every breakend after the stall was
 judged novel. A window `getfa -Q` dropped has no PAF lines and is novel to a
 lower `fltbnd -Q` — undetectable, so the docs say to use the same `-Q`. Either
-input may be `-` (stdin), not both (`io::check_stdin`); missing input → help (via
+input may be `-` (stdin), not both (`io::open_raw`); missing input → help (via
 `main.rs::print_subcommand_help`, shared with `extract`/`getfa`). Fixtures:
 `test/flt01.clip`, `test/flt01.rb3.paf`.
 

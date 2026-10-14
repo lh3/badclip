@@ -82,11 +82,9 @@ impl Regions {
 /// Filter `input` (`extract`/`merge` output; gzip ok, "-" for stdin) against the
 /// BED file `bed` (each region padded by `margin` on both sides), printing lines
 /// whose breakends both avoid every region.
-pub fn run(input: &str, bed: &str, margin: i64) -> io::Result<()> {
+pub fn run(input: &str, bed: &str, margin: i64, out: &mut impl Write) -> io::Result<()> {
     let regions = Regions::load(bed, margin)?;
     let reader = open_reader(input)?;
-    let stdout = io::stdout();
-    let mut out = io::BufWriter::new(stdout.lock());
 
     for line in reader.lines() {
         let line = line?;
@@ -103,6 +101,5 @@ pub fn run(input: &str, bed: &str, margin: i64) -> io::Result<()> {
             writeln!(out, "{line}")?;
         }
     }
-    out.flush()?;
     Ok(())
 }

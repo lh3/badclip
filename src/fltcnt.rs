@@ -114,10 +114,8 @@ fn ins_nearby(info: &str) -> i64 {
         })
 }
 
-pub fn run(o: &FltcntOpts) -> io::Result<()> {
+pub fn run(o: &FltcntOpts, out: &mut impl Write) -> io::Result<()> {
     let reader = open_reader(&o.input)?;
-    let stdout = io::stdout();
-    let mut out = io::BufWriter::new(stdout.lock());
 
     // Whether any line had a `--src` source, to warn when none does (e.g. the
     // default `*.flt` naming doesn't fit the input).
@@ -166,7 +164,6 @@ pub fn run(o: &FltcntOpts) -> io::Result<()> {
         }
         writeln!(out, "{line}")?;
     }
-    out.flush()?;
     if !seen_src {
         let src = if o.src.is_empty() {
             "*.flt".to_string()

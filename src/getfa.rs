@@ -27,6 +27,7 @@ pub(crate) struct Window<'a> {
 }
 
 /// The eseq windows of an `extract` record, in FASTA order, and its quality.
+#[derive(Default)]
 pub(crate) struct Windows<'a> {
     /// Windows that carry an eseq (two for an insertion, else at most one).
     pub windows: Vec<Window<'a>>,
@@ -34,13 +35,13 @@ pub(crate) struct Windows<'a> {
     pub equal: Option<i64>,
 }
 
-/// Parse the eseq windows of one `extract` record. `Ok(None)` for a line with
-/// fewer than 9 columns; an error if the record has no `ctype` (pre-0.2 output)
-/// or an unknown one.
-pub(crate) fn parse_windows(line: &str) -> Result<Option<Windows<'_>>, String> {
+/// Parse the eseq windows of one `extract` record; none for a line with fewer
+/// than 9 columns or without `idx`. An error if the record has no `ctype`
+/// (pre-0.2 output) or an unknown one.
+pub(crate) fn parse_windows(line: &str) -> Result<Windows<'_>, String> {
     let fields: Vec<&str> = line.split('\t').collect();
     if fields.len() < 9 {
-        return Ok(None);
+        return Ok(Windows::default());
     }
     let qname = fields[5];
     let codes = match Ctype::from_info(fields[8])? {
@@ -73,6 +74,9 @@ pub(crate) fn parse_windows(line: &str) -> Result<Option<Windows<'_>>, String> {
             _ => {}
         }
     }
+    let Some(idx) = idx else {
+        return Ok(Windows::default());
+    };
     let mut windows = Vec::new();
     for i in 0..2 {
         let (Some(elen), Some(eseq)) = (elen[i], eseq[i]) else {
@@ -86,29 +90,22 @@ pub(crate) fn parse_windows(line: &str) -> Result<Option<Windows<'_>>, String> {
             continue;
         }
         let elen = [e[0], e[1], e[2]];
-        let Some(idx) = idx else {
-            return Ok(None);
-        };
         windows.push(Window {
             name: format!("{qname}_{idx}_{}_{}_{}", elen[0], elen[2], codes[i]),
             elen,
             eseq,
         });
     }
-    Ok(Some(Windows { windows, equal }))
+    Ok(Windows { windows, equal })
 }
 
-/// Read `extract` output from `input` (`"-"` = stdin) and emit FASTA. Records
-/// whose `equal` quality is below `min_equal` are dropped.
-pub fn run(input: &str, min_equal: i64) -> io::Result<()> {
+/// Read `extract` output from `input` (`"-"` = stdin) and write FASTA to `out`.
+/// Records whose `equal` quality is below `min_equal` are dropped.
+pub fn run(input: &str, min_equal: i64, out: &mut impl Write) -> io::Result<()> {
     let reader = open_reader(input)?;
-    let stdout = io::stdout();
-    let mut out = io::BufWriter::new(stdout.lock());
     for (lineno, line) in reader.lines().enumerate() {
         let line = line?;
-        let Some(w) = parse_windows(&line).map_err(|e| line_error(input, lineno + 1, e))? else {
-            continue;
-        };
+        let w = parse_windows(&line).map_err(|e| line_error(input, lineno + 1, e))?;
         // Drop records with a low eseq quality; keep those lacking an `equal` tag.
         if w.equal.is_some_and(|q| q < min_equal) {
             continue;
@@ -118,6 +115,5 @@ pub fn run(input: &str, min_equal: i64) -> io::Result<()> {
             writeln!(out, "{}", win.eseq)?;
         }
     }
-    out.flush()?;
     Ok(())
 }

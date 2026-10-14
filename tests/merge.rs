@@ -7,7 +7,7 @@
 
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 
 fn test_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test")
@@ -113,13 +113,14 @@ fn merge_reads_stdin() {
 }
 
 /// Run `badclip merge [args...] -` feeding `input` on stdin.
-fn run_merge_stdin(input: &str, args: &[&str]) -> String {
+fn merge_stdin_output(input: &str, args: &[&str]) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
         .arg("merge")
         .args(args)
         .arg("-")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("failed to spawn badclip merge");
     child
@@ -128,8 +129,17 @@ fn run_merge_stdin(input: &str, args: &[&str]) -> String {
         .unwrap()
         .write_all(input.as_bytes())
         .unwrap();
-    let out = child.wait_with_output().unwrap();
-    assert!(out.status.success());
+    child.wait_with_output().unwrap()
+}
+
+/// [`merge_stdin_output`], asserting success; returns stdout.
+fn run_merge_stdin(input: &str, args: &[&str]) -> String {
+    let out = merge_stdin_output(input, args);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8(out.stdout).unwrap()
 }
 
@@ -218,20 +228,7 @@ fn merge_requires_ctype() {
 chr1\t100\t>.\t.\t.\tc1\t60\t+\tsource=foo;ctype=trim;mapq=60,0
 chr1\t500\t>>\tchr2\t50\tj1\t60\t+\tsource=foo;mapq=0,0
 ";
-    let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
-        .args(["merge", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(input.as_bytes())
-        .unwrap();
-    let out = child.wait_with_output().unwrap();
+    let out = merge_stdin_output(input, &[]);
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("stdin:2: no `ctype=` tag"), "{err}");
@@ -576,18 +573,10 @@ fn merge_no_input_shows_help() {
 #[test]
 fn merge_win_size_suffix() {
     // Length options take a k/m/g suffix: -w 0.1k is the default -w 100.
-    let run = |args: &[&str]| {
-        let out = Command::new(env!("CARGO_BIN_EXE_badclip"))
-            .arg("merge")
-            .args(args)
-            .arg(test_dir().join("merge01.clip"))
-            .output()
-            .unwrap();
-        assert!(out.status.success());
-        String::from_utf8(out.stdout).unwrap()
-    };
+    let clip = test_dir().join("merge01.clip");
+    let clip = clip.to_str().unwrap();
     assert_eq!(
-        run(&["-c", "3", "-s", "1", "-w", "0.1k"]),
-        run(&["-c", "3", "-s", "1"])
+        run_merge(&["-c", "3", "-s", "1", "-w", "0.1k", clip]),
+        run_merge(&["-c", "3", "-s", "1", clip])
     );
 }

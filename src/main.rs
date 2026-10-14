@@ -14,6 +14,7 @@ mod merge;
 mod paf;
 mod record;
 
+use std::io::Write;
 use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -292,6 +293,11 @@ mod tests {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    // One buffered stdout for every subcommand, flushed once below, so a failed
+    // final write (full disk, closed pipe) is reported rather than lost when the
+    // `BufWriter` drops.
+    let stdout = std::io::stdout();
+    let out = &mut std::io::BufWriter::new(stdout.lock());
     let result = match cli.command {
         Command::Extract {
             input,
@@ -313,30 +319,28 @@ fn main() -> ExitCode {
             let Some(input) = input else {
                 return print_subcommand_help("extract");
             };
-            // `--alt -` with stdin input would lock stdin twice and hang.
-            io::check_stdin(&[&input, alt.as_deref().unwrap_or("")]).and_then(|_| {
-                extract::run(&ExtractOpts {
-                    input,
-                    paf,
-                    reference,
-                    alt,
-                    source,
-                    min_clip,
-                    trim,
-                    min_gap,
-                    min_mapq,
-                    min_aln_len,
-                    flank,
-                    max_eseq,
-                    min_equal,
-                })
-            })
+            let opts = ExtractOpts {
+                input,
+                paf,
+                reference,
+                alt,
+                source,
+                min_clip,
+                trim,
+                min_gap,
+                min_mapq,
+                min_aln_len,
+                flank,
+                max_eseq,
+                min_equal,
+            };
+            extract::run(&opts, out)
         }
         Command::Getfa { min_equal, input } => {
             let Some(input) = input else {
                 return print_subcommand_help("getfa");
             };
-            getfa::run(&input, min_equal)
+            getfa::run(&input, min_equal, out)
         }
         Command::Fltbnd {
             margin,
@@ -348,9 +352,8 @@ fn main() -> ExitCode {
             let (Some(extract_out), Some(rb3_paf)) = (extract_out, rb3_paf) else {
                 return print_subcommand_help("fltbnd");
             };
-            io::check_stdin(&[&extract_out, &rb3_paf]).and_then(|_| {
-                fltbnd::run(&extract_out, &rb3_paf, margin, source.as_deref(), min_equal)
-            })
+            let src = source.as_deref();
+            fltbnd::run(&extract_out, &rb3_paf, margin, src, min_equal, out)
         }
         Command::Merge {
             inputs,
@@ -369,7 +372,7 @@ fn main() -> ExitCode {
             if inputs.is_empty() {
                 return print_subcommand_help("merge");
             }
-            merge::run(&MergeOpts {
+            let opts = MergeOpts {
                 inputs,
                 min_cnt,
                 min_cnt_strand,
@@ -382,13 +385,14 @@ fn main() -> ExitCode {
                 merge_input,
                 min_cnt_in,
                 min_cnt_strand_in,
-            })
+            };
+            merge::run(&opts, out)
         }
         Command::Fltreg { input, bed, margin } => {
             let (Some(input), Some(bed)) = (input, bed) else {
                 return print_subcommand_help("fltreg");
             };
-            io::check_stdin(&[&input, &bed]).and_then(|_| fltreg::run(&input, &bed, margin))
+            fltreg::run(&input, &bed, margin, out)
         }
         Command::Fltcnt {
             input,
@@ -404,7 +408,7 @@ fn main() -> ExitCode {
             let Some(input) = input else {
                 return print_subcommand_help("fltcnt");
             };
-            fltcnt::run(&FltcntOpts {
+            let opts = FltcntOpts {
                 input,
                 min_src,
                 min_src_strand,
@@ -414,11 +418,12 @@ fn main() -> ExitCode {
                 max_ins,
                 src,
                 rest,
-            })
+            };
+            fltcnt::run(&opts, out)
         }
     };
 
-    if let Err(e) = result {
+    if let Err(e) = result.and_then(|()| out.flush()) {
         eprintln!("badclip: {e}");
         return ExitCode::FAILURE;
     }

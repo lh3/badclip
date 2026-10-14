@@ -103,49 +103,30 @@ struct Cluster {
 }
 
 /// Parse one `extract` line into a `Rec`; `Ok(None)` for malformed lines (`< 9`
-/// fields), lines whose col-7 mapq is below `min_mapq`, lines whose `equal`
-/// quality (the lower of `equal`/`equal2`) is below `min_equal` (lines lacking
-/// an `equal` tag are kept), or
-/// **join** lines whose smaller per-hit mapq (from the `mapq=` INFO tag) is below
-/// `min_mapq_min` (clips are exempt), consistent with the other subcommands. A
-/// record without a known `ctype` is an error, whether or not it is filtered.
-fn parse_rec(
-    line: &str,
-    min_equal: i64,
-    min_mapq: i64,
-    min_mapq_min: i64,
-) -> Result<Option<Rec>, String> {
+/// fields) and for lines the per-record filters drop: col-7 mapq below `-q`,
+/// `equal` quality (the lower of `equal`/`equal2`) below `-Q` (lines lacking an
+/// `equal` tag are kept), or a **join** whose smaller per-hit mapq (from the
+/// `mapq=` INFO tag) is below `-p` (clips are exempt). A record without a known
+/// `ctype` is an error, whether or not it is filtered.
+fn parse_rec(line: &str, opts: &MergeOpts) -> Result<Option<Rec>, String> {
     let f: Vec<&str> = line.split('\t').collect();
     if f.len() < 9 {
         return Ok(None);
     }
     let ctype = Ctype::from_info(f[8])?;
-    Ok(parse_rec_fields(
-        &f,
-        ctype,
-        min_equal,
-        min_mapq,
-        min_mapq_min,
-    ))
-}
-
-/// The filters and fields of [`parse_rec`], once `ctype` is known.
-fn parse_rec_fields(
-    f: &[&str],
-    ctype: Ctype,
-    min_equal: i64,
-    min_mapq: i64,
-    min_mapq_min: i64,
-) -> Option<Rec> {
     let ob = f[2].as_bytes();
+    let (Ok(pos), Ok(mapq), Some(strand)) =
+        (f[1].parse(), f[6].parse::<i64>(), f[7].bytes().next())
+    else {
+        return Ok(None);
+    };
     if ob.len() < 2 {
-        return None;
+        return Ok(None);
     }
     // Drop breakends whose col-7 mapq (the join's max, or a clip's mapq) is below
     // the threshold.
-    let mapq: i64 = f[6].parse().ok()?;
-    if mapq < min_mapq {
-        return None;
+    if mapq < opts.min_mapq {
+        return Ok(None);
     }
     // `.` (a clip's missing mate) fails to parse -> None, the sentinel `same_sv`
     // wants; also gates the -p clip exemption below.
@@ -163,8 +144,8 @@ fn parse_rec_fields(
         .unwrap_or((mapq, 0));
     // -p: drop join breakends whose *smaller* per-hit mapq is below the threshold.
     // Clips (pos2 absent) are exempt: a clip's mapq2 is 0, so its min is always 0.
-    if pos2.is_some() && mapq1.min(mapq2) < min_mapq_min {
-        return None;
+    if pos2.is_some() && mapq1.min(mapq2) < opts.min_mapq_min {
+        return Ok(None);
     }
     // Drop low-quality-eseq breakends; keep those without an `equal` tag. An
     // insertion has two windows (`equal`, `equal2`); the lower one counts.
@@ -176,20 +157,20 @@ fn parse_rec_fields(
         })
         .filter_map(|v| v.parse::<i64>().ok())
         .min()
-        && q < min_equal
+        && q < opts.min_equal
     {
-        return None;
+        return Ok(None);
     }
-    Some(Rec {
+    Ok(Some(Rec {
         ctg: f[0].to_string(),
-        pos: f[1].parse().ok()?,
+        pos,
         ori: [ob[0], ob[1]],
         ctg2: f[3].to_string(),
         pos2,
         name: f[5].to_string(),
         mapq1,
         mapq2,
-        strand: f[7].bytes().next()?,
+        strand,
         // Dataset label from the `source=` INFO tag (order-independent); "." when
         // absent, though extract always emits it.
         source: f[8]
@@ -209,7 +190,7 @@ fn parse_rec_fields(
         fr: 0,
         rf: 0,
         sources: Vec::new(),
-    })
+    }))
 }
 
 /// Parse a `count=` INFO value: sum its `|`-separated `[src:]f,r` entries into
@@ -303,13 +284,9 @@ fn parse_rec_merge(line: &str, opts: &MergeOpts) -> Option<Rec> {
         mapq2,
         strand: f[7].bytes().next()?,
         source: ".".to_string(),
-        // `merge` output has no ctype; not used in -m mode (write_sv_merge emits
-        // no per-ctype tags).
-        ctype: if f[3] == "." {
-            Ctype::Trim
-        } else {
-            Ctype::Split
-        },
+        // `merge` output has no ctype; unused in -m mode (write_sv_merge emits no
+        // per-ctype tags).
+        ctype: Ctype::Split,
         inslen: 0,
         fwd,
         rev,
@@ -609,7 +586,7 @@ fn write_sv_merge(out: &mut impl Write, s: &[Rec], v: &Rec, opts: &MergeOpts) ->
 }
 
 /// Read `extract` output, cluster/merge breakends, and print consensus calls.
-pub fn run(opts: &MergeOpts) -> io::Result<()> {
+pub fn run(opts: &MergeOpts, out: &mut impl Write) -> io::Result<()> {
     // Load everything, then sort by (ctg, pos). Rust `str` ordering equals
     // `LC_ALL=C sort` byte order (the pipeline convention); the sort is stable,
     // so equal-key records keep input order and the representative pick is
@@ -622,8 +599,7 @@ pub fn run(opts: &MergeOpts) -> io::Result<()> {
             let rec = if opts.merge_input {
                 parse_rec_merge(&line, opts)
             } else {
-                parse_rec(&line, opts.min_equal, opts.min_mapq, opts.min_mapq_min)
-                    .map_err(|e| line_error(input, lineno + 1, e))?
+                parse_rec(&line, opts).map_err(|e| line_error(input, lineno + 1, e))?
             };
             if let Some(r) = rec {
                 recs.push(r);
@@ -633,9 +609,6 @@ pub fn run(opts: &MergeOpts) -> io::Result<()> {
     recs.sort_by(|a, b| a.ctg.cmp(&b.ctg).then(a.pos.cmp(&b.pos)));
     // Index every (filtered) `ins` record before the sweep moves them away.
     let ins = (!opts.merge_input).then(|| InsIndex::new(&recs, opts.win_size));
-
-    let stdout = io::stdout();
-    let mut out = io::BufWriter::new(stdout.lock());
 
     let max_check = opts.max_check.max(0) as usize;
     let mut active: VecDeque<Cluster> = VecDeque::new();
@@ -647,7 +620,7 @@ pub fn run(opts: &MergeOpts) -> io::Result<()> {
                 || v.pos - front.pos_max > opts.win_size
                 || active.len() as i64 > opts.max_allele
             {
-                write_sv(&mut out, &active.pop_front().unwrap(), opts, ins.as_ref())?;
+                write_sv(out, &active.pop_front().unwrap(), opts, ins.as_ref())?;
             } else {
                 break;
             }
@@ -686,8 +659,7 @@ pub fn run(opts: &MergeOpts) -> io::Result<()> {
         }
     }
     while let Some(cl) = active.pop_front() {
-        write_sv(&mut out, &cl, opts, ins.as_ref())?;
+        write_sv(out, &cl, opts, ins.as_ref())?;
     }
-    out.flush()?;
     Ok(())
 }

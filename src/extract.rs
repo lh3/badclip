@@ -325,18 +325,15 @@ fn eseq_qual(quals: &[u8]) -> i64 {
     (-10.0 * mean.log10()).round() as i64
 }
 
-/// Run the extract command end to end.
-pub fn run(opts: &ExtractOpts) -> io::Result<()> {
-    let stdout = io::stdout();
-    let mut out = io::BufWriter::new(stdout.lock());
+/// Run the extract command end to end, writing breakends to `out`.
+pub fn run(opts: &ExtractOpts, out: &mut impl Write) -> io::Result<()> {
     let mut stats = Stats::default();
     if opts.paf {
         let reader = open_reader(&opts.input)?;
-        run_paf(reader, opts, &mut stats, &mut out)?;
+        run_paf(reader, opts, &mut stats, out)?;
     } else {
-        crate::aln::run(&opts.input, opts, &mut stats, &mut out)?;
+        crate::aln::run(&opts.input, opts, &mut stats, out)?;
     }
-    out.flush()?;
     stats.report();
     Ok(())
 }
@@ -565,11 +562,10 @@ fn emit_split(
     // read's `<<` becomes `>>`/'-' (flipping on every tie would give `<<` for
     // '+' reads and `>>` for '-' reads, which never cluster).
     let mut strand = '+';
-    let swap = match (ctg0.cmp(ctg1), pos0.cmp(&pos1)) {
-        (Ordering::Less, _) => false,
-        (Ordering::Greater, _) => true,
-        (Ordering::Equal, Ordering::Equal) => o0 == '<',
-        (Ordering::Equal, ord) => ord == Ordering::Greater,
+    let swap = match (ctg0, pos0).cmp(&(ctg1, pos1)) {
+        Ordering::Less => false,
+        Ordering::Greater => true,
+        Ordering::Equal => o0 == '<',
     };
     if swap {
         let (no0, no1) = (flip(o1), flip(o0));

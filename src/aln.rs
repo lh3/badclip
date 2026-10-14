@@ -25,8 +25,7 @@
 //! normalized with the read sequence (absent from PAF).
 
 use std::collections::HashSet;
-use std::fs::File;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Write};
 
 use noodles_fasta as fasta;
 use noodles_sam::Header;
@@ -47,14 +46,9 @@ pub fn run(
     stats: &mut Stats,
     out: &mut impl Write,
 ) -> io::Result<()> {
-    let inner: Box<dyn Read> = if input == "-" {
-        Box::new(io::stdin().lock())
-    } else {
-        Box::new(File::open(input)?)
-    };
     // Peek the magic bytes (non-consuming) only to gate the reference
     // requirement; noodles-util still performs the real format detection.
-    let mut reader = BufReader::new(inner);
+    let mut reader = BufReader::new(crate::io::open_raw(input)?);
     let is_cram = reader.fill_buf()?.starts_with(b"CRAM");
 
     let mut builder = alignment::io::reader::Builder::default();

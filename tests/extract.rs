@@ -7,7 +7,7 @@
 
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 
 fn test_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test")
@@ -629,17 +629,22 @@ fn bam_eseq_dropped_when_over_limit() {
 
 // --- getfa ---
 
-/// Run `badclip getfa -` feeding `bytes` on stdin.
-fn run_getfa_stdin(bytes: &[u8]) -> String {
+/// Run `badclip [args...]` feeding `bytes` on stdin; stdout and stderr captured.
+fn run_with_stdin(args: &[&str], bytes: &[u8]) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
-        .arg("getfa")
-        .arg("-")
+        .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("failed to spawn badclip");
     child.stdin.take().unwrap().write_all(bytes).unwrap();
-    let output = child.wait_with_output().unwrap();
+    child.wait_with_output().unwrap()
+}
+
+/// Run `badclip getfa -` feeding `bytes` on stdin.
+fn run_getfa_stdin(bytes: &[u8]) -> String {
+    let output = run_with_stdin(&["getfa", "-"], bytes);
     assert!(output.status.success(), "badclip getfa failed");
     String::from_utf8(output.stdout).unwrap()
 }
@@ -678,20 +683,7 @@ fn getfa_requires_ctype() {
             "chrA\t1\t>.\t.\t.\tr1\t60\t+\tctype=trim;idx=0;elen=1,0,1;eseq=AC\n\
              chrA\t1\t>>\tchrB\t2\tr2\t60\t+\t{info}\n"
         );
-        let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
-            .args(["getfa", "-"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(input.as_bytes())
-            .unwrap();
-        let out = child.wait_with_output().unwrap();
+        let out = run_with_stdin(&["getfa", "-"], input.as_bytes());
         assert!(!out.status.success());
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(err.contains(msg), "{err}");
@@ -1138,19 +1130,9 @@ rm\t2000\t1000\t2000\t-\tchrA\t100000\t5000\t6000\t1000\t1000\t60\ttp:A:P
             "chrA\t6000\t>>\tchrA\t6000\trm\t60\t-",
         ]
     );
-    let mut child = Command::new(env!("CARGO_BIN_EXE_badclip"))
-        .args(["merge", "-s", "1", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(got.as_bytes())
-        .unwrap();
-    let merged = String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap();
+    let out = run_with_stdin(&["merge", "-s", "1", "-"], got.as_bytes());
+    assert!(out.status.success());
+    let merged = String::from_utf8(out.stdout).unwrap();
     assert_eq!(merged.lines().count(), 1, "{merged}");
     assert!(merged.contains(";count=foo:1,1;"), "{merged}");
 }
@@ -1208,6 +1190,7 @@ fn stdin_given_once() {
         &["fltbnd", "-", "-"][..],
         &["fltreg", "-", "-"],
         &["extract", "--alt", "-", "-"],
+        &["merge", "-", "-"],
     ] {
         let out = Command::new(env!("CARGO_BIN_EXE_badclip"))
             .args(args)
