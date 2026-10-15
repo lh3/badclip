@@ -448,11 +448,12 @@ badclip fltcnt [OPTIONS] [INPUT]
 - `-s INT` — minimum `--src` reads on each strand (default 0).
 - `-r INT` — maximum reads from the `--rest` sources (default 0, i.e. every
   read must come from `--src`; `-1` = no limit).
-- `-l NUM` — minimum `pos2 - pos1` (columns 5 and 2). Any value `>= 0` also
-  drops trims (column 4 = `.`), so the default 0 drops trims only; `-1` disables
-  the filter. Inter-contig splits have no distance and pass. Note an insertion
-  spans only its `L..R` shift range, so any positive `-l` drops insertions.
-  Accepts a `k`/`m`/`g` suffix, e.g. `-l 100k`, `-l 1m`.
+- `-l NUM` — minimum SV length: `pos2 - pos1` (columns 5 and 2), or for a `>>`
+  call carrying `avg_inslen` (an insertion) that inserted length instead, since
+  its `pos2 - pos1` is only the `L..R` shift range. Any value `>= 0` also drops
+  trims (column 4 = `.`), so the default 0 drops trims only; `-1` disables the
+  filter. Inter-contig splits have no length and pass. Accepts a `k`/`m`/`g`
+  suffix, e.g. `-l 100k`, `-l 1m`.
 - `-I` — apply `-l` to inversions (`ori` `><`/`<>`) too; by default they pass
   regardless of distance.
 - `-i INT` — maximum `ins_nearby` reads, summed over its sources (default 0,

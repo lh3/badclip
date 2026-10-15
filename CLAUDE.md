@@ -254,9 +254,11 @@ line has any `--src` source, a stderr warning is printed at the end. Keep iff
 `<= -r` (0; negative = no cap) — `-r` is a **maximum**, so by default a call
 survives only if all its reads are from `--src` sources. `-l`
 (default 0; `k`/`m`/`g` suffix ok via `main.rs::parse_num`): when `>= 0`, drop
-clips (`ctg2 = "."`), and when positive also same-contig lines with
-`pos2 - pos1 < -l`; inter-contig joins pass. (An insertion's `pos2 - pos1` is
-only its normalization range `R - L`, so any positive `-l` drops insertions.) Inversions (`ori` `><`/`<>`) are
+clips (`ctg2 = "."`), and when positive also same-contig lines shorter than
+`-l`; inter-contig joins pass. The length is `pos2 - pos1`, except that a `>>`
+line carrying `avg_inslen=` (an insertion call, possibly mixed with split reads)
+uses that instead — its `pos2 - pos1` is only the normalization range `R - L`.
+Inversions (`ori` `><`/`<>`) are
 exempt from the distance test (always kept, regardless of `pos2 - pos1`) unless
 `-I` is given, which applies `-l` to them too; clips are still dropped either
 way. `-l -1` (any negative) disables it. `-i` (default 0) also requires the

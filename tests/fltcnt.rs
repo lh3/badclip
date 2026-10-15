@@ -166,3 +166,23 @@ chr1\t100\t>>\tchr2\t50\ttwo\t6\t+\tavg_mapq=60,60;count=s.flt:3,3;ins_nearby=N.
     assert_eq!(kept(input, &["-i", "4"]), ["none", "one"]);
     assert_eq!(kept(input, &["-i", "5"]), ["none", "one", "two"]);
 }
+
+#[test]
+fn fltcnt_ins_len() {
+    // An insertion's pos2-pos1 is only its L..R shift range (20 here): a `>>`
+    // call with `avg_inslen` is measured by that instead.
+    let input = "\
+chr1\t100\t>>\tchr1\t120\tlong\t6\t+\tavg_mapq=60,60;count=s.flt:3,3;avg_inslen=5000;diff_inslen=10
+chr1\t100\t>>\tchr1\t120\tshort\t6\t+\tavg_mapq=60,60;count=s.flt:3,3;avg_inslen=800;diff_inslen=10
+chr1\t100\t>>\tchr1\t5000\tdel\t6\t+\tavg_mapq=60,60;count=s.flt:3,3
+chr1\t100\t<<\tchr1\t120\tnotins\t6\t+\tavg_mapq=60,60;count=s.flt:3,3;avg_inslen=5000;diff_inslen=10
+chr1\t100\t>>\tchr2\t120\ttra\t6\t+\tavg_mapq=60,60;count=s.flt:3,3;avg_inslen=10;diff_inslen=0
+";
+    assert_eq!(kept(input, &["-l", "1000"]), ["long", "del", "tra"]);
+    assert_eq!(kept(input, &["-l", "800"]), ["long", "short", "del", "tra"]);
+    // Inclusive: 5000 is not shorter than 5k; del (4900) is.
+    assert_eq!(kept(input, &["-l", "5k"]), ["long", "tra"]);
+    assert_eq!(kept(input, &["-l", "21"]), ["long", "short", "del", "tra"]);
+    // -l 0 drops clips only.
+    assert_eq!(kept(input, &[]).len(), 5);
+}

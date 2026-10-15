@@ -13,9 +13,11 @@
 //! the `--src` reads has `>= -s`, and the `--rest` reads total `<= -r` (a
 //! negative `-r` lifts that cap). So by default (`-r 0`) a call survives only if
 //! all of its reads come from `--src` sources. Unless
-//! `-l` is negative, clips (`ctg2 = "."`) and same-contig calls with
-//! `pos2 - pos1 < -l` are also dropped (so the default `-l 0` drops clips only);
-//! inter-contig joins have no distance and pass. Inversions (`ori` `><`/`<>`)
+//! `-l` is negative, clips (`ctg2 = "."`) and same-contig calls shorter than
+//! `-l` are also dropped (so the default `-l 0` drops clips only); a call's
+//! length is `pos2 - pos1`, or its `avg_inslen=` for a `>>` call carrying one
+//! (an insertion, whose `pos2 - pos1` is only its L..R shift range).
+//! Inter-contig joins have no distance and pass. Inversions (`ori` `><`/`<>`)
 //! are exempt from the distance test unless `-I` is given. Calls whose
 //! `ins_nearby=` counts (summed over sources; absent = 0) exceed `-i` are dropped
 //! (a negative `-i` lifts that cap), so by default (`-i 0`) any call carrying
@@ -73,10 +75,15 @@ fn add(acc: &mut Option<(i64, i64)>, f: i64, r: i64) {
     a.1 += r;
 }
 
+/// The value of INFO tag `key` (given with its `=`, e.g. `"count="`).
+fn tag<'a>(info: &'a str, key: &str) -> Option<&'a str> {
+    info.split(';').find_map(|t| t.strip_prefix(key))
+}
+
 /// Parse the `count=` tag of an INFO column into `--src`/`--rest` counts, or
 /// `None` if the line has no `count=` tag at all.
 fn parse_counts(info: &str, o: &FltcntOpts) -> Option<Counts> {
-    let val = info.split(';').find_map(|t| t.strip_prefix("count="))?;
+    let val = tag(info, "count=")?;
     let mut c = Counts {
         src: None,
         rest: None,
@@ -105,13 +112,11 @@ fn parse_counts(info: &str, o: &FltcntOpts) -> Option<Counts> {
 
 /// Total `ins_nearby=src:n|...` reads over all sources; 0 without the tag.
 fn ins_nearby(info: &str) -> i64 {
-    info.split(';')
-        .find_map(|t| t.strip_prefix("ins_nearby="))
-        .map_or(0, |val| {
-            val.split('|')
-                .filter_map(|ent| ent.rsplit_once(':')?.1.parse::<i64>().ok())
-                .sum()
-        })
+    tag(info, "ins_nearby=").map_or(0, |val| {
+        val.split('|')
+            .filter_map(|ent| ent.rsplit_once(':')?.1.parse::<i64>().ok())
+            .sum()
+    })
 }
 
 pub fn run(o: &FltcntOpts, out: &mut impl Write) -> io::Result<()> {
@@ -126,7 +131,8 @@ pub fn run(o: &FltcntOpts, out: &mut impl Write) -> io::Result<()> {
             continue;
         }
         let f: Vec<&str> = line.split('\t').collect();
-        let counts = f.get(8).and_then(|info| parse_counts(info, o));
+        let info = f.get(8).copied().unwrap_or("");
+        let counts = parse_counts(info, o);
         let Some(Counts { src, rest }) = counts.filter(|c| c.src.is_some() || c.rest.is_some())
         else {
             return Err(line_error(
@@ -142,7 +148,7 @@ pub fn run(o: &FltcntOpts, out: &mut impl Write) -> io::Result<()> {
         if sf + sr < o.min_src
             || sf.min(sr) < o.min_src_strand
             || (o.max_rest >= 0 && rf + rr > o.max_rest)
-            || (o.max_ins >= 0 && f.get(8).map_or(0, |info| ins_nearby(info)) > o.max_ins)
+            || (o.max_ins >= 0 && ins_nearby(info) > o.max_ins)
         {
             continue;
         }
@@ -152,13 +158,18 @@ pub fn run(o: &FltcntOpts, out: &mut impl Write) -> io::Result<()> {
                 continue;
             }
             // Inversion (`><`/`<>`): distance-exempt unless -I.
-            let inv = f.get(2).is_some_and(|&ori| ori == "><" || ori == "<>");
+            let ori = f.get(2).copied().unwrap_or("");
+            let inv = ori == "><" || ori == "<>";
             if o.min_dist > 0 && f.first() == f.get(3) && (o.inv_dist || !inv) {
-                let pos = |i: usize| f.get(i).and_then(|s| s.parse::<i64>().ok());
-                if let (Some(p1), Some(p2)) = (pos(1), pos(4)) {
-                    if p2 - p1 < o.min_dist {
-                        continue;
-                    }
+                let num = |s: &str| s.parse::<i64>().ok();
+                // An insertion (`>>` with `avg_inslen`) is as long as its
+                // inserted sequence; its `pos2 - pos1` is only the L..R shift.
+                let inslen = tag(info, "avg_inslen=")
+                    .filter(|_| ori == ">>")
+                    .and_then(num);
+                let len = inslen.or_else(|| Some(num(f.get(4)?)? - num(f.get(1)?)?));
+                if len.is_some_and(|l| l < o.min_dist) {
+                    continue;
                 }
             }
         }

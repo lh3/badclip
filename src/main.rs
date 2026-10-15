@@ -218,8 +218,9 @@ enum Command {
         )]
         max_rest: i64,
 
-        /// Minimum pos2-pos1 distance (k/m/g suffix ok, e.g. 100k); any value
-        /// >= 0 also drops clips, -1 disables the filter.
+        /// Minimum pos2-pos1 distance, or avg_inslen for a >> call carrying it
+        /// (k/m/g suffix ok, e.g. 100k); any value >= 0 also drops clips, -1
+        /// disables the filter.
         #[arg(short = 'l', long = "min-dist", default_value_t = 0,
               value_parser = parse_num, allow_negative_numbers = true)]
         min_dist: i64,
