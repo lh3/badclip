@@ -469,11 +469,13 @@ Read counts come from the `count=` INFO tag (`count=S.flt:f,r|S.raw:f,r`); each
 group's counts are summed over its sources. The typical input merges the raw
 breakends (e.g. `S.raw`) with the `fltbnd -s S.flt` survivors, so by default
 `-c`/`-s` test the novel `S.flt` reads and `-r 0` drops any call that also has
-reads from another source (`S.raw`, or other samples in a multi-sample merge). A line with no source
-in either group (e.g. `merge -m` output, whose `count=` carries no source names)
-aborts the run, and a warning is printed if no line has a `--src` source at all
-(the `*.flt` default doesn't fit — name the sources with `--src`). Survivors are
-printed verbatim.
+reads from another source (`S.raw`, or other samples in a multi-sample merge).
+With an explicit `--rest`, sources in neither list are ignored — e.g. on a
+tumor/normal merge, `--src N.flt --rest N.raw` disregards the `T.*` reads. A line
+whose `count=` names no source (e.g. `merge -m` output) aborts the run. A warning
+is printed for each `--src`/`--rest` name that occurs on no line (likely a typo),
+and, with the default `--src`, if no line has a `*.flt` source (name the sources
+with `--src`). Survivors are printed verbatim.
 
 ```sh
 badclip extract -s S.raw in.bam > S.clip

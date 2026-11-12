@@ -247,9 +247,12 @@ No new dependency. Fixture: `test/fltreg01.bed`.
 survivors verbatim. Counts come from the `count=` tag's `src:f,r` entries, split
 into two groups: `--src` (comma list; default every source ending with `.flt`)
 and `--rest` (comma list; default every source **not** in `--src`); each group's
-`f,r` is summed over its sources (a source in both lists counts in both). A line
-with no source in either group (incl. source-less `-m` output) **aborts**; if no
-line has any `--src` source, a stderr warning is printed at the end. Keep iff
+`f,r` is summed over its sources (a source in both lists counts in both; one in
+neither is ignored, e.g. the tumor's in a paired merge filtered on the normal's).
+A line whose `count=` is absent or names no source (`-m` output) **aborts**. At
+the end, stderr warns about each `--src`/`--rest` name on no line (a typo would
+otherwise be silently ignored) and, with the default `--src`, if no `*.flt`
+source exists. Keep iff
 `--src` total `>= -c` (3), `--src` `min(f,r) >= -s` (0), and `--rest` total
 `<= -r` (0; negative = no cap) — `-r` is a **maximum**, so by default a call
 survives only if all its reads are from `--src` sources. `-l`

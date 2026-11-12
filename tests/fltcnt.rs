@@ -127,7 +127,7 @@ chr1\t100\t>>\tchr1\t5000\tx\t6\t+\tavg_mapq=60,60;count=A:1,1|B:3,3|C:2,0
     assert!(kept(input, &["--src", "A,C", "-c", "4", "-s", "2", "-r", "-1"]).is_empty());
     // All sources in --src: nothing left for --rest.
     assert_eq!(kept(input, &["--src", "A,B,C"]), ["x"]);
-    // Explicit --rest: only A counts (2 reads); C is in neither group.
+    // Explicit --rest: only A counts (2 reads); C is in neither group, ignored.
     assert!(kept(input, &["--src", "B", "--rest", "A", "-r", "1"]).is_empty());
     assert_eq!(
         kept(input, &["--src", "B", "--rest", "A", "-r", "2"]),
@@ -137,18 +137,50 @@ chr1\t100\t>>\tchr1\t5000\tx\t6\t+\tavg_mapq=60,60;count=A:1,1|B:3,3|C:2,0
 
 #[test]
 fn fltcnt_no_source_aborts() {
-    // `merge -m` output has no source labels: neither group matches.
+    // `merge -m` output has no source labels at all.
     let input = "chr1\t100\t>>\tchr1\t5000\tx\t6\t+\tavg_mapq=60,60;count=3,3\n";
     let out = run_fltcnt(input, &[]);
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("--src"));
-    // With explicit lists, a line with only other sources also aborts.
-    let input = "chr1\t100\t>>\tchr1\t5000\tx\t6\t+\tavg_mapq=60,60;count=Z:3,3\n";
+    assert!(String::from_utf8_lossy(&out.stderr).contains("count="));
     assert!(
         !run_fltcnt(input, &["--src", "B", "--rest", "A"])
             .status
             .success()
     );
+}
+
+#[test]
+fn fltcnt_other_sources_ignored() {
+    // Paired merge: only the normal's N.flt/N.raw are named; T.* are ignored.
+    let input = "\
+chr1\t100\t>>\tchr2\t50\ttonly\t6\t+\tavg_mapq=60,60;count=T.flt:3,3|T.raw:2,2
+chr1\t100\t>>\tchr2\t50\tmixed\t9\t+\tavg_mapq=60,60;count=N.flt:2,2|T.raw:5,5
+chr1\t100\t>>\tchr2\t50\twithraw\t9\t+\tavg_mapq=60,60;count=N.flt:2,2|N.raw:1,0|T.flt:4,4
+";
+    let args = ["--src", "N.flt", "--rest", "N.raw"];
+    let out = run_fltcnt(input, &args);
+    assert!(out.status.success());
+    assert!(
+        out.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // tonly has 0 --src reads (fails -c 3); mixed has 4 and no N.raw.
+    assert_eq!(kept(input, &args), ["mixed"]);
+    // -c 0: tonly (0 src, 0 rest) passes too; -r 1 admits withraw's N.raw read.
+    assert_eq!(
+        kept(input, &[&args[..], &["-c", "0"]].concat()),
+        ["tonly", "mixed"]
+    );
+    assert_eq!(
+        kept(input, &[&args[..], &["-r", "1"]].concat()),
+        ["mixed", "withraw"]
+    );
+    // A name on no line (typo) is warned about.
+    let out = run_fltcnt(input, &["--src", "N.flt", "--rest", "N.rwa"]);
+    assert!(out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("--rest source `N.rwa`"), "{err}");
 }
 
 #[test]

@@ -5,9 +5,11 @@
 //! read counts (`count=S1:f,r|S2:f,r`). Sources fall into two groups: `--src`
 //! (comma-separated names; default: every source ending with `.flt`, i.e. the
 //! `fltbnd -s` survivors) and `--rest` (comma-separated names; default: every
-//! source not in `--src`). Each group's counts are summed over its sources. A
-//! line with no source in either group (e.g. `merge -m` output, whose `count=`
-//! has no source labels) is an error.
+//! source not in `--src`). Each group's counts are summed over its sources;
+//! a source in neither group is ignored (e.g. another sample's in a paired
+//! merge). A line whose `count=` names no source at all (`merge -m` output) is
+//! an error, and a `--src`/`--rest` name that occurs on no line (likely a typo)
+//! gets a warning.
 //!
 //! A line is printed verbatim if the `--src` reads total `>= -c`, each strand of
 //! the `--src` reads has `>= -s`, and the `--rest` reads total `<= -r` (a
@@ -24,6 +26,7 @@
 //! `ins_nearby` is dropped. `merge` writes that tag only on calls with a
 //! `split`/`trim` read, so pure `del`/`ins` calls always pass.
 
+use std::collections::HashSet;
 use std::io::{self, BufRead, Write};
 
 use crate::io::{line_error, open_reader};
@@ -62,17 +65,17 @@ impl FltcntOpts {
     }
 }
 
-/// Summed `(fwd, rev)` counts of the `--src` and `--rest` sources of one line;
-/// `None` for a group with no source on the line.
+/// Summed `(fwd, rev)` counts of the `--src` and `--rest` sources of one line
+/// (`(0, 0)` for a group with no source on the line).
+#[derive(Default)]
 struct Counts {
-    src: Option<(i64, i64)>,
-    rest: Option<(i64, i64)>,
+    src: (i64, i64),
+    rest: (i64, i64),
 }
 
-fn add(acc: &mut Option<(i64, i64)>, f: i64, r: i64) {
-    let a = acc.get_or_insert((0, 0));
-    a.0 += f;
-    a.1 += r;
+fn add(acc: &mut (i64, i64), f: i64, r: i64) {
+    acc.0 += f;
+    acc.1 += r;
 }
 
 /// The value of INFO tag `key` (given with its `=`, e.g. `"count="`).
@@ -80,17 +83,15 @@ fn tag<'a>(info: &'a str, key: &str) -> Option<&'a str> {
     info.split(';').find_map(|t| t.strip_prefix(key))
 }
 
-/// Parse the `count=` tag of an INFO column into `--src`/`--rest` counts, or
-/// `None` if the line has no `count=` tag at all.
-fn parse_counts(info: &str, o: &FltcntOpts) -> Option<Counts> {
+/// Parse the `count=` tag of an INFO column into `--src`/`--rest` counts,
+/// adding each source name to `names`. Sources in neither group are ignored.
+/// `None` if the line has no `count=` tag or no source-labeled entry in it.
+fn parse_counts(info: &str, o: &FltcntOpts, names: &mut HashSet<String>) -> Option<Counts> {
     let val = tag(info, "count=")?;
-    let mut c = Counts {
-        src: None,
-        rest: None,
-    };
+    let mut c = Counts::default();
+    let mut labeled = false;
     for ent in val.split('|') {
-        // An entry without a `src:` prefix (e.g. `merge -m` output) matches
-        // neither group.
+        // An entry without a `src:` prefix (e.g. `merge -m` output) is skipped.
         let Some((src, fr)) = ent.rsplit_once(':') else {
             continue;
         };
@@ -100,6 +101,10 @@ fn parse_counts(info: &str, o: &FltcntOpts) -> Option<Counts> {
         let (Ok(f), Ok(r)) = (f.parse::<i64>(), r.parse::<i64>()) else {
             continue;
         };
+        labeled = true;
+        if !names.contains(src) {
+            names.insert(src.to_string());
+        }
         if o.is_src(src) {
             add(&mut c.src, f, r);
         }
@@ -107,7 +112,7 @@ fn parse_counts(info: &str, o: &FltcntOpts) -> Option<Counts> {
             add(&mut c.rest, f, r);
         }
     }
-    Some(c)
+    labeled.then_some(c)
 }
 
 /// Total `ins_nearby=src:n|...` reads over all sources; 0 without the tag.
@@ -122,9 +127,10 @@ fn ins_nearby(info: &str) -> i64 {
 pub fn run(o: &FltcntOpts, out: &mut impl Write) -> io::Result<()> {
     let reader = open_reader(&o.input)?;
 
-    // Whether any line had a `--src` source, to warn when none does (e.g. the
-    // default `*.flt` naming doesn't fit the input).
-    let mut seen_src = false;
+    // Every source name seen, to warn about `--src`/`--rest` names on no line
+    // (likely typos, as sources in neither group are silently ignored) or, by
+    // default, when no `*.flt` source exists (the naming doesn't fit).
+    let mut names = HashSet::new();
     for (lineno, line) in reader.lines().enumerate() {
         let line = line?;
         if line.is_empty() {
@@ -132,19 +138,18 @@ pub fn run(o: &FltcntOpts, out: &mut impl Write) -> io::Result<()> {
         }
         let f: Vec<&str> = line.split('\t').collect();
         let info = f.get(8).copied().unwrap_or("");
-        let counts = parse_counts(info, o);
-        let Some(Counts { src, rest }) = counts.filter(|c| c.src.is_some() || c.rest.is_some())
+        let Some(Counts {
+            src: (sf, sr),
+            rest: (rf, rr),
+        }) = parse_counts(info, o, &mut names)
         else {
             return Err(line_error(
                 &o.input,
                 lineno + 1,
-                "no --src or --rest source in `count=`; \
-                 specify the sources with --src and --rest",
+                "no source-labeled `count=` tag (`merge -m` output?); \
+                 fltcnt needs per-source read counts",
             ));
         };
-        seen_src |= src.is_some();
-        let (sf, sr) = src.unwrap_or((0, 0));
-        let (rf, rr) = rest.unwrap_or((0, 0));
         if sf + sr < o.min_src
             || sf.min(sr) < o.min_src_strand
             || (o.max_rest >= 0 && rf + rr > o.max_rest)
@@ -175,13 +180,13 @@ pub fn run(o: &FltcntOpts, out: &mut impl Write) -> io::Result<()> {
         }
         writeln!(out, "{line}")?;
     }
-    if !seen_src {
-        let src = if o.src.is_empty() {
-            "*.flt".to_string()
-        } else {
-            o.src.join(",")
-        };
-        eprintln!("badclip: warning: no line has a --src source ({src}); specify it with --src");
+    for (opt, list) in [("--src", &o.src), ("--rest", &o.rest)] {
+        for n in list.iter().filter(|n| !names.contains(n.as_str())) {
+            eprintln!("badclip: warning: {opt} source `{n}` occurs on no line");
+        }
+    }
+    if o.src.is_empty() && !names.iter().any(|n| o.is_src(n)) {
+        eprintln!("badclip: warning: no line has a --src source (*.flt); specify it with --src");
     }
     Ok(())
 }

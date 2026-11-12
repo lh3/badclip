@@ -245,6 +245,7 @@ enum Command {
         src: Vec<String>,
 
         /// Comma-separated sources tested by -r [default: sources not in --src].
+        /// With both lists given, sources in neither are ignored.
         #[arg(long = "rest", value_delimiter = ',')]
         rest: Vec<String>,
     },
